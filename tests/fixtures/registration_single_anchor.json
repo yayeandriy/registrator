@@ -1,0 +1,27 @@
+{
+  "detections": [
+    {
+      "t": 0.0,
+      "detections": [
+        {
+          "label": "connector",
+          "confidence": 0.9,
+          "x": 0.4,
+          "y": 0.4,
+          "width": 0.2,
+          "height": 0.2
+        }
+      ]
+    }
+  ],
+  "expected": [
+    {
+      "id": "8e7f6b3a-0000-4000-8000-000000000001",
+      "yolo_class": "connector",
+      "boundary": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+      "rotation": 0.0,
+      "is_anchor": true,
+      "children": []
+    }
+  ]
+}

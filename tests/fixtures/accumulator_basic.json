@@ -1,0 +1,12 @@
+{
+  "frames": [
+    { "detections": [ { "label": "connector", "confidence": 0.9, "x": 0.40, "y": 0.40, "width": 0.20, "height": 0.20 } ] },
+    { "detections": [ { "label": "connector", "confidence": 0.9, "x": 0.41, "y": 0.40, "width": 0.20, "height": 0.20 } ] },
+    { "detections": [ { "label": "connector", "confidence": 0.9, "x": 0.40, "y": 0.41, "width": 0.20, "height": 0.20 } ] },
+    { "detections": [] },
+    { "detections": [ { "label": "connector", "confidence": 0.9, "x": 0.41, "y": 0.41, "width": 0.20, "height": 0.20 } ] },
+    { "detections": [ { "label": "connector", "confidence": 0.9, "x": 0.40, "y": 0.40, "width": 0.20, "height": 0.20 }, { "label": "noise", "confidence": 0.4, "x": 0.90, "y": 0.90, "width": 0.05, "height": 0.05 } ] },
+    { "detections": [ { "label": "connector", "confidence": 0.9, "x": 0.40, "y": 0.40, "width": 0.20, "height": 0.20 } ] },
+    { "detections": [] }
+  ]
+}

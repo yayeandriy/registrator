@@ -1,0 +1,33 @@
+{
+  "expected": [
+    {
+      "id": "8e7f6b3a-0000-4000-8000-000000000001",
+      "yolo_class": "connector",
+      "boundary": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+      "rotation": 0.0,
+      "is_anchor": true,
+      "children": []
+    },
+    {
+      "id": "8e7f6b3a-0000-4000-8000-000000000002",
+      "yolo_class": "button",
+      "boundary": { "x": 20.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+      "rotation": 0.0,
+      "is_anchor": false,
+      "children": []
+    },
+    {
+      "id": "8e7f6b3a-0000-4000-8000-000000000003",
+      "yolo_class": "led",
+      "boundary": { "x": 40.0, "y": 0.0, "width": 2.0, "height": 2.0 },
+      "rotation": 0.0,
+      "is_anchor": false,
+      "children": []
+    }
+  ],
+  "registered_detections": [
+    { "label": "connector", "confidence": 0.9, "x": 0.1, "y": 0.1, "width": 9.9, "height": 9.9 },
+    { "label": "switch", "confidence": 0.7, "x": 20.2, "y": 0.1, "width": 3.8, "height": 3.9 },
+    { "label": "capacitor", "confidence": 0.6, "x": 80.0, "y": 80.0, "width": 1.0, "height": 1.0 }
+  ]
+}
