@@ -167,6 +167,7 @@ local function validate_object(o, detections, thresholds)
             return {
                 id = o.id,
                 yolo_class = o.yolo_class,
+                ocr_value = o.ocr_value,
                 is_anchor = o.is_anchor,
                 status = "mismatched",
                 matched_label = wrong_class.label,
@@ -177,6 +178,7 @@ local function validate_object(o, detections, thresholds)
         return {
             id = o.id,
             yolo_class = o.yolo_class,
+            ocr_value = o.ocr_value,
             is_anchor = o.is_anchor,
             status = "missing",
         }, nil
@@ -211,6 +213,7 @@ local function validate_object(o, detections, thresholds)
     return {
         id = o.id,
         yolo_class = o.yolo_class,
+        ocr_value = o.ocr_value,
         is_anchor = o.is_anchor,
         status = status,
         matched_label = detected.label,

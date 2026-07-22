@@ -12,6 +12,7 @@ Field names are exactly as the scripts read them — snake_case, matching the or
 {
   "id": "<uuid-string>",
   "yolo_class": "connector",
+  "ocr_value": "SN-42",
   "boundary": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
   "rotation": 0.0,
   "is_anchor": true,
@@ -19,6 +20,7 @@ Field names are exactly as the scripts read them — snake_case, matching the or
 }
 ```
 
+- `yolo_class` and `ocr_value` are both optional (`null`/absent allowed). Class-based matching in the scripts uses `yolo_class` when present; OCR matching is a host concern until wired into the scripts.
 - `boundary` is this object's own **unrotated** local footprint, in board units, positioned in its *parent's* local space (nested, not root-relative) — `rotation` (degrees) is applied around `boundary`'s own center.
 - `children` is the same shape, recursively. A flat layout is just every object with `children = {}`.
 - Not the same shape as the HTTP `ReferenceObjectDto` (which flattens `boundary` to top-level `x`/`y`/`width`/`height` fields) — a host adapting from that DTO needs to re-nest those four fields under `boundary` first.
