@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `accumulator.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `presence_validator.lua`, `accumulator.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -97,7 +97,66 @@ Quads (`Detection.corners`, `expected_corners`) are always 4 of these, ordered c
 
 `status` is one of `"matched"`, `"missing"`, `"mismatched"`, `"mispositioned"`, `"misrotated"`, `"mispositioned_misrotated"`. `matched_label`/`matched_confidence`/`delta_position` are `null` only when `status == "missing"`; `delta_rotation` is additionally `null` when `status == "mismatched"`, or when neither side has an orientation to compare.
 
+## `presence_validator.lua`
+
+Content / presence check — **no spatial registration**. Used by the Constructor Validation pipeline step (and any host that only cares whether expected content showed up).
+
+**Input:**
+
+```json
+{
+  "expected": [ /* ReferenceObject[] — may include presence, ocr_value, yolo_class */ ],
+  "detections": [
+    { "label": "connector", "confidence": 0.9, "x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2, "kind": "yolo" },
+    { "label": "59364-7206143-1-4363", "confidence": 1.0, "x": 0.1, "y": 0.4, "width": 0.6, "height": 0.1, "kind": "ocr" }
+  ]
+}
+```
+
+- Participates when `presence: true` **or** non-empty `ocr_value` (same membership as Constructor Presence rail). Objects lacking both a non-empty `ocr_value` and a non-empty `yolo_class` are skipped.
+- Detection coordinates are ignored (presence only).
+- `kind`: `"ocr"` → OCR string; anything else (including omitted) → YOLO class label.
+
+**Matching** (modalities independent — no cross-fallback). One ReferenceObject with both fields yields **two** result rows:
+
+| Check | When | Rule |
+|-------|------|------|
+| OCR | non-empty `ocr_value` | Loose text match against OCR labels (case-insensitive; whitespace/punctuation stripped; either side may contain the other when the shorter token is ≥3 chars). One OCR string may satisfy multiple expected values. |
+| YOLO | `presence: true`, non-empty `yolo_class`, and a `vision_model_id` | Exact `label` match on a non-OCR detection. First claim wins (greedy). Slug-only class with YOLO model None is ignored. |
+
+**Extras** (modality-scoped):
+- Unclaimed YOLO boxes when at least one YOLO check ran
+- OCR strings that satisfied no expected `ocr_value` when at least one OCR check ran
+
+**Output:**
+
+```json
+{
+  "objects": [
+    {
+      "id": "<uuid>",
+      "yolo_class": "connector",
+      "ocr_value": null,
+      "is_anchor": true,
+      "presence": true,
+      "status": "matched",
+      "matched_label": "connector",
+      "matched_confidence": 0.9,
+      "match_kind": "yolo"
+    }
+  ],
+  "extra_detections": [ /* unused YOLO and/or unused OCR for checked modalities */ ],
+  "score": 1.0,
+  "matched": 1,
+  "total": 1,
+  "extra": 0
+}
+```
+
+`status` is `"matched"` or `"missing"`. `match_kind` is `"yolo"` or `"ocr"`.
+
 ## `accumulator.lua`
+
 
 **Input:**
 

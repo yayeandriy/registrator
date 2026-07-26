@@ -2,7 +2,7 @@
   "expected": [
     {
       "id": "8e7f6b3a-0000-4000-8000-000000000001",
-      "yolo_class": "connector",
+      "yolo_classes": ["connector"],
       "boundary": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
       "rotation": 0.0,
       "is_anchor": true,
@@ -10,7 +10,7 @@
     },
     {
       "id": "8e7f6b3a-0000-4000-8000-000000000002",
-      "yolo_class": "button",
+      "yolo_classes": ["button"],
       "boundary": { "x": 20.0, "y": 0.0, "width": 4.0, "height": 4.0 },
       "rotation": 0.0,
       "is_anchor": false,
@@ -18,7 +18,7 @@
     },
     {
       "id": "8e7f6b3a-0000-4000-8000-000000000003",
-      "yolo_class": "led",
+      "yolo_classes": ["led"],
       "boundary": { "x": 40.0, "y": 0.0, "width": 2.0, "height": 2.0 },
       "rotation": 0.0,
       "is_anchor": false,

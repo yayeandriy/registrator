@@ -8,7 +8,7 @@ Every algorithm here is written exactly once, in `lua/`, and is meant to run **b
 
 ## Contents
 
-- `lua/registration.lua`, `lua/validation.lua`, `lua/accumulator.lua` — the three algorithms. Each file's own header comment is the authoritative spec; `SCHEMA.md` is a field-level index into all three at once.
+- `lua/registration.lua`, `lua/validation.lua`, `lua/presence_validator.lua`, `lua/accumulator.lua` — the algorithms. Each file's own header comment is the authoritative spec; `SCHEMA.md` is a field-level index into all three at once.
 - `lua/json.lua` — a small dependency-free JSON encode/decode, needed only by a host with no native Lua-table marshaling of its own (i.e. a plain C Lua VM driven over the `lua_State*` API, like the Swift host) — `mlua`'s serde bridge on the Rust side has no use for this file at all.
 - `tests/` — a pure-Lua test suite (no Rust/Swift toolchain needed) exercising all three scripts across the same JSON-string boundary a real Swift host would use. Run with:
 

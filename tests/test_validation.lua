@@ -62,7 +62,7 @@ t.eq(result.extra_detections[1].label, "capacitor", "basic: extra detection labe
 local rotation_result = (function()
     local rot_input = {
         expected = {
-            { id = "8e7f6b3a-0000-4000-8000-0000000000rr", yolo_class = "widget", boundary = { x = 0.0, y = 0.0, width = 4.0, height = 4.0 }, rotation = 10.0, is_anchor = false, children = {} },
+            { id = "8e7f6b3a-0000-4000-8000-0000000000rr", yolo_classes = { "widget" }, boundary = { x = 0.0, y = 0.0, width = 4.0, height = 4.0 }, rotation = 10.0, is_anchor = false, children = {} },
         },
         registered_detections = {
             { label = "widget", confidence = 0.9, x = 0.0, y = 0.0, width = 4.0, height = 4.0, rotation = 95.0 },

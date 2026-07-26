@@ -13,7 +13,7 @@
 --
 -- Input (a single Lua table, passed as this chunk's first argument):
 --   {
---     expected = { { yolo_class, boundary = { x, y, width, height }, rotation, is_anchor, children = {...} }, ... },
+--     expected = { { yolo_classes, boundary = { x, y, width, height }, rotation, is_anchor, children = {...} }, ... },
 --     registered_detections = { { label, confidence, x, y, width, height, rotation }, ... },
 --     thresholds = { position = <board units>, rotation = <degrees> } | nil,
 --   }
@@ -27,7 +27,7 @@
 --   {
 --     objects = {
 --       {
---         id, yolo_class, is_anchor,
+--         id, yolo_classes, is_anchor,
 --         status = "matched" | "missing" | "mismatched" | "mispositioned" | "misrotated" | "mispositioned_misrotated",
 --         matched_label, matched_confidence,   -- nil when status == "missing"
 --         delta_position,                      -- board units; nil when status == "missing"
@@ -73,6 +73,41 @@ local DEFAULT_THRESHOLDS = {
 -- resolve one against, and this is small/stable enough (mirrors
 -- `ReferenceObject`'s own shape 1:1) that drift risk is low. If it ever
 -- needs to change, change it in both files.
+local function trim(s)
+    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function non_empty(s)
+    return type(s) == "string" and trim(s) ~= ""
+end
+
+local function yolo_classes_for(o)
+    if type(o.yolo_classes) == "table" then
+        local out = {}
+        for _, v in ipairs(o.yolo_classes) do
+            if non_empty(v) then
+                table.insert(out, trim(v))
+            end
+        end
+        if #out > 0 then
+            return out
+        end
+    end
+    if non_empty(o.yolo_class) then
+        return { trim(o.yolo_class) }
+    end
+    return {}
+end
+
+local function label_in_classes(label, classes)
+    for _, class in ipairs(classes) do
+        if label == class then
+            return true
+        end
+    end
+    return false
+end
+
 local function flatten(objects, origin_x, origin_y, out)
     origin_x = origin_x or 0.0
     origin_y = origin_y or 0.0
@@ -81,7 +116,7 @@ local function flatten(objects, origin_x, origin_y, out)
         local y = origin_y + o.boundary.y
         table.insert(out, {
             id = o.id,
-            yolo_class = o.yolo_class,
+            yolo_classes = yolo_classes_for(o),
             x = x,
             y = y,
             width = o.boundary.width,
@@ -126,7 +161,7 @@ local function nearest_match(o, detections)
     local ex, ey = center(o)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        if d.label == o.yolo_class then
+        if label_in_classes(d.label, o.yolo_classes or {}) then
             local dx, dy = center(d)
             local dist = distance(ex, ey, dx, dy)
             if dist < best_dist then
@@ -166,8 +201,8 @@ local function validate_object(o, detections, thresholds)
         if wrong_class and wrong_dist <= thresholds.position then
             return {
                 id = o.id,
-                yolo_class = o.yolo_class,
-                ocr_value = o.ocr_value,
+                yolo_classes = o.yolo_classes,
+                ocr_values = o.ocr_values,
                 is_anchor = o.is_anchor,
                 status = "mismatched",
                 matched_label = wrong_class.label,
@@ -177,8 +212,8 @@ local function validate_object(o, detections, thresholds)
         end
         return {
             id = o.id,
-            yolo_class = o.yolo_class,
-            ocr_value = o.ocr_value,
+            yolo_classes = yolo_classes_for(o),
+            ocr_values = o.ocr_values,
             is_anchor = o.is_anchor,
             status = "missing",
         }, nil
@@ -212,8 +247,8 @@ local function validate_object(o, detections, thresholds)
 
     return {
         id = o.id,
-        yolo_class = o.yolo_class,
-        ocr_value = o.ocr_value,
+        yolo_classes = o.yolo_classes,
+        ocr_values = o.ocr_values,
         is_anchor = o.is_anchor,
         status = status,
         matched_label = detected.label,

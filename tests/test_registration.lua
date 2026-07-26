@@ -50,7 +50,7 @@ t.is_nil(result.error, "single anchor: no error")
 local no_anchor_result = (function()
     local input = {
         detections = { { t = 0.0, detections = { { label = "button", confidence = 0.9, x = 0.1, y = 0.1, width = 0.2, height = 0.2 } } } },
-        expected = { { id = "8e7f6b3a-0000-4000-8000-00000000000a", yolo_class = "connector", boundary = { x = 0.0, y = 0.0, width = 10.0, height = 10.0 }, rotation = 0.0, is_anchor = true, children = {} } },
+        expected = { { id = "8e7f6b3a-0000-4000-8000-00000000000a", yolo_classes = { "connector" }, boundary = { x = 0.0, y = 0.0, width = 10.0, height = 10.0 }, rotation = 0.0, is_anchor = true, children = {} } },
     }
     return json.decode(json.encode(registration(input)))
 end)()
@@ -74,8 +74,8 @@ local two_anchor_result = (function()
             },
         },
         expected = {
-            { id = "8e7f6b3a-0000-4000-8000-00000000000b", yolo_class = "anchor_a", boundary = { x = 0.0, y = 0.0, width = 1.0, height = 1.0 }, rotation = 0.0, is_anchor = true, children = {} },
-            { id = "8e7f6b3a-0000-4000-8000-00000000000c", yolo_class = "anchor_b", boundary = { x = 10.0, y = 0.0, width = 1.0, height = 1.0 }, rotation = 0.0, is_anchor = true, children = {} },
+            { id = "8e7f6b3a-0000-4000-8000-00000000000b", yolo_classes = { "anchor_a" }, boundary = { x = 0.0, y = 0.0, width = 1.0, height = 1.0 }, rotation = 0.0, is_anchor = true, children = {} },
+            { id = "8e7f6b3a-0000-4000-8000-00000000000c", yolo_classes = { "anchor_b" }, boundary = { x = 10.0, y = 0.0, width = 1.0, height = 1.0 }, rotation = 0.0, is_anchor = true, children = {} },
         },
     }
     return json.decode(json.encode(registration(input)))

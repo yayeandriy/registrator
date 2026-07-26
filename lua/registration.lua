@@ -11,7 +11,7 @@
 -- Input (a single Lua table, passed as this chunk's first argument):
 --   {
 --     detections = { { t = 0.0, detections = { { label, confidence, x, y, width, height, corners }, ... } }, ... },
---     expected   = { { yolo_class, boundary = { x, y, width, height }, rotation, is_anchor, children = {...} }, ... },
+--     expected   = { { yolo_classes, boundary = { x, y, width, height }, rotation, is_anchor, children = {...} }, ... },
 --   }
 -- `detections` is (usually) a single recorded frame — the caller is
 -- expected to find the anchor(s) fresh per frame (a moving camera means a
@@ -83,6 +83,41 @@
 -- plain resize whenever the fit picked up real shear, off-axis scale, or
 -- perspective; that's expected, not a bug.
 
+local function trim(s)
+    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function non_empty(s)
+    return type(s) == "string" and trim(s) ~= ""
+end
+
+local function yolo_classes_for(o)
+    if type(o.yolo_classes) == "table" then
+        local out = {}
+        for _, v in ipairs(o.yolo_classes) do
+            if non_empty(v) then
+                table.insert(out, trim(v))
+            end
+        end
+        if #out > 0 then
+            return out
+        end
+    end
+    if non_empty(o.yolo_class) then
+        return { trim(o.yolo_class) }
+    end
+    return {}
+end
+
+local function label_in_classes(label, classes)
+    for _, class in ipairs(classes) do
+        if label == class then
+            return true
+        end
+    end
+    return false
+end
+
 local function flatten(objects, origin_x, origin_y, out)
     origin_x = origin_x or 0.0
     origin_y = origin_y or 0.0
@@ -91,7 +126,7 @@ local function flatten(objects, origin_x, origin_y, out)
         local y = origin_y + o.boundary.y
         table.insert(out, {
             id = o.id,
-            yolo_class = o.yolo_class,
+            yolo_classes = yolo_classes_for(o),
             x = x,
             y = y,
             width = o.boundary.width,
@@ -150,7 +185,7 @@ local function match_anchors(expected_flat, frames)
             for _, frame in ipairs(frames) do
                 local found = nil
                 for _, d in ipairs(frame.detections or {}) do
-                    if d.label == o.yolo_class then
+                    if label_in_classes(d.label, o.yolo_classes or {}) then
                         found = d
                         break
                     end
