@@ -142,8 +142,8 @@ local ocr_result = run({
 
 t.eq(ocr_result.total, 3, "ocr: three presence texts")
 t.eq(ocr_result.matched, 2, "ocr: two substring hits")
-t.eq(ocr_result.extra, 1, "ocr: unused noise-token is EXTRA; YOLO suppressed")
-t.eq(ocr_result.extra_detections[1].label, "noise-token", "ocr: extra label")
+t.eq(ocr_result.extra, 0, "ocr: unused OCR is never EXTRA; YOLO suppressed")
+t.eq(#ocr_result.extra_detections, 0, "ocr: no extra detections")
 
 local serial = find_object(ocr_result.objects, "bbbbbbbb-0000-4000-8000-000000000001")
 t.eq(serial.status, "matched", "ocr: serial substring matched")
@@ -288,8 +288,8 @@ local dual_partial = run({
 t.eq(dual_partial.total, 2, "dual_partial: two rows")
 t.eq(find_object(dual_partial.objects, "eeeeeeee-0000-4000-8000-000000000002", "yolo").status, "matched", "dual_partial: YOLO OK")
 t.eq(find_object(dual_partial.objects, "eeeeeeee-0000-4000-8000-000000000002", "ocr").status, "missing", "dual_partial: OCR MISS")
-t.eq(dual_partial.extra, 1, "dual_partial: (020 EXTRA")
-t.eq(dual_partial.extra_detections[1].label, "(020", "dual_partial: extra label")
+t.eq(dual_partial.extra, 0, "dual_partial: unused OCR is never EXTRA")
+t.eq(#dual_partial.extra_detections, 0, "dual_partial: no extras")
 
 -- Slug-as-class with YOLO model None must not create a YOLO check.
 local no_model = run({
@@ -318,7 +318,7 @@ t.is_nil(find_object(no_model.objects, "eeeeeeee-0000-4000-8000-000000000003", "
 -- Live Stamps demo shape: A1 has vision model + class+text; part_number is
 -- OCR-only (slug may linger as yolo_classes but vision_model_id is nil).
 --   YOLO a_1_upper SUCCESS; a_1_lower + line_1_full EXTRA
---   OCR 12 MISS; 59364-7206143-1 SUCCESS; (020 EXTRA
+--   OCR 12 MISS; 59364-7206143-1 SUCCESS; (020 discarded (OCR never EXTRA)
 --   no MISS part_number yolo
 local stamp = run({
     expected = {
@@ -354,7 +354,7 @@ local stamp = run({
 })
 t.eq(stamp.matched, 2, "stamp: a_1_upper + serial matched")
 t.eq(stamp.total, 3, "stamp: YOLO + OCR12 + serial = 3 checks")
-t.eq(stamp.extra, 3, "stamp: two YOLO extras + (020")
+t.eq(stamp.extra, 2, "stamp: two YOLO extras only (OCR never EXTRA)")
 
 local upper = find_object(stamp.objects, "stamp000-0000-4000-8000-000000000001", "yolo")
 t.eq(upper.status, "matched", "stamp: a_1_upper SUCCESS")
@@ -376,7 +376,7 @@ for _, d in ipairs(stamp.extra_detections) do
 end
 t.eq(extra_labels["a_1_lower"], "yolo", "stamp: a_1_lower EXTRA")
 t.eq(extra_labels["line_1_full"], "yolo", "stamp: line_1_full EXTRA")
-t.eq(extra_labels["(020"], "ocr", "stamp: (020 EXTRA")
+t.is_nil(extra_labels["(020"], "stamp: unused OCR never EXTRA")
 t.is_nil(extra_labels["a_1_upper"], "stamp: claimed YOLO not EXTRA")
 t.is_nil(extra_labels["59364-7206143-1-4363"], "stamp: used OCR not EXTRA")
 

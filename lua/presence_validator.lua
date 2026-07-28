@@ -26,10 +26,10 @@
 --     and produce two result rows (e.g. stamp A1 = class `a_1_upper` +
 --     text `12`).
 --
--- Extras (modality-scoped):
+-- Extras (YOLO-only):
 --   - Unclaimed YOLO boxes, only if at least one YOLO check ran.
---   - OCR strings that satisfied no expected `ocr_values` entry, only if at
---     least one OCR check ran.
+--   - Unused OCR is never EXTRA (hosts filter to expected needles; noise
+--     must not flood Matched/Mistakes).
 --
 -- Input (a single Lua table):
 --   {
@@ -305,6 +305,9 @@ local function presence_validator(input)
         end
     end
 
+    -- EXTRA is YOLO-only. Unused OCR strings have no product value as
+    -- extras (hosts filter OCR to expected needles; noise must not flood
+    -- Matched/Mistakes). `expect_ocr` still gates whether OCR checks ran.
     local extra_detections = {}
     if expect_yolo then
         for _, d in ipairs(detections) do
@@ -317,17 +320,8 @@ local function presence_validator(input)
             end
         end
     end
-    if expect_ocr then
-        for _, d in ipairs(ocr_detections) do
-            if not ocr_used[d._idx] then
-                local copy = copy_detection(d)
-                if not copy.kind or copy.kind == "" then
-                    copy.kind = "ocr"
-                end
-                table.insert(extra_detections, copy)
-            end
-        end
-    end
+    -- Note: `expect_ocr` may be true; unused OCR detections are intentionally
+    -- omitted from EXTRA (YOLO-only extras).
 
     local total = #objects
     return {
