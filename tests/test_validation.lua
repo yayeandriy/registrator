@@ -74,6 +74,42 @@ end)()
 t.eq(rotation_result.objects[1].status, "misrotated", "rotation: misrotated despite exact position match")
 t.close(rotation_result.objects[1].delta_rotation, 85.0, 1e-6, "rotation: delta_rotation folded correctly")
 
+-- Two expected capacitors; only one detection. The matched sibling must not
+-- make the empty slot read as mismatched ("wrong type").
+local neighbor_result = (function()
+    local n_input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000c3",
+                yolo_classes = { "capacitor" },
+                boundary = { x = 0.0, y = 0.0, width = 4.0, height = 4.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000c4",
+                yolo_classes = { "capacitor" },
+                boundary = { x = 3.0, y = 0.0, width = 4.0, height = 4.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+        },
+        registered_detections = {
+            -- Center ~ (2, 2) — close to both slots; only one physical part.
+            { label = "capacitor", confidence = 0.9, x = 0.0, y = 0.0, width = 4.0, height = 4.0 },
+        },
+        thresholds = { position = 8.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(n_input)))
+end)()
+local c3 = find_object(neighbor_result.objects, "8e7f6b3a-0000-4000-8000-0000000000c3")
+local c4 = find_object(neighbor_result.objects, "8e7f6b3a-0000-4000-8000-0000000000c4")
+t.eq(c3.status, "matched", "neighbor: first capacitor matched")
+t.eq(c4.status, "missing", "neighbor: empty slot is missing, not mismatched")
+t.eq(neighbor_result.extra, 0, "neighbor: sole detection claimed by match")
+
 if not t.summary("validation") then
     os.exit(1)
 end

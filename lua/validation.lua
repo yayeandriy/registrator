@@ -151,17 +151,13 @@ local function angle_diff_mod_180(a, b)
     return diff
 end
 
--- Nearest same-class detection to this expected object's center. Greedy
--- and allows the same detection to be claimed by more than one expected
--- object — acceptable for now (mirrors `match_anchors`'s own "for now"
--- simplifications) since the interesting failure modes this is meant to
--- catch (a part missing, or present but out of place) don't hinge on
--- resolving that kind of ambiguity.
-local function nearest_match(o, detections)
+-- Nearest same-class detection to this expected object's center among
+-- detections not yet claimed by another expected object.
+local function nearest_match(o, detections, claimed)
     local ex, ey = center(o)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        if label_in_classes(d.label, o.yolo_classes or {}) then
+        if not claimed[d._idx] and label_in_classes(d.label, o.yolo_classes or {}) then
             local dx, dy = center(d)
             local dist = distance(ex, ey, dx, dy)
             if dist < best_dist then
@@ -172,51 +168,34 @@ local function nearest_match(o, detections)
     return best, best_dist
 end
 
--- Nearest detection of *any* class — only consulted once `nearest_match`
--- above has already come up empty, to tell "nothing detected here at
--- all" (missing) apart from "something IS here, just the wrong class"
--- (mismatched).
-local function nearest_any_match(o, detections)
+-- Nearest unclaimed detection of *any* class — only after same-class
+-- matching has finished, to tell "nothing here" (missing) apart from
+-- "something unclaimed IS here, wrong class" (mismatched).
+--
+-- Must ignore detections already claimed as another object's match:
+-- otherwise a neighbor capacitor that correctly matched `capacitor3`
+-- also makes a removed `capacitor4` read as "incorrect · wrong type".
+local function nearest_any_match(o, detections, claimed)
     local ex, ey = center(o)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        local dx, dy = center(d)
-        local dist = distance(ex, ey, dx, dy)
-        if dist < best_dist then
-            best, best_dist = d, dist
+        if not claimed[d._idx] then
+            local dx, dy = center(d)
+            local dist = distance(ex, ey, dx, dy)
+            if dist < best_dist then
+                best, best_dist = d, dist
+            end
         end
     end
     return best, best_dist
 end
 
--- Returns the per-object validation result and, when a detection was
--- consulted to produce it (matched/mispositioned/misrotated/mismatched
--- — every case but "missing"), that detection's own `_idx` (tagged on
--- by `validation` below) so the caller can work out which detections
--- never explained *any* expected object at all.
-local function validate_object(o, detections, thresholds)
-    local detected, delta_position = nearest_match(o, detections)
+-- Same-class outcome (matched / mispositioned / misrotated / …).
+-- Returns nil, nil when no same-class detection remains unclaimed.
+local function validate_same_class(o, detections, thresholds, claimed)
+    local detected, delta_position = nearest_match(o, detections, claimed)
     if not detected then
-        local wrong_class, wrong_dist = nearest_any_match(o, detections)
-        if wrong_class and wrong_dist <= thresholds.position then
-            return {
-                id = o.id,
-                yolo_classes = o.yolo_classes,
-                ocr_values = o.ocr_values,
-                is_anchor = o.is_anchor,
-                status = "mismatched",
-                matched_label = wrong_class.label,
-                matched_confidence = wrong_class.confidence,
-                delta_position = wrong_dist,
-            }, wrong_class._idx
-        end
-        return {
-            id = o.id,
-            yolo_classes = yolo_classes_for(o),
-            ocr_values = o.ocr_values,
-            is_anchor = o.is_anchor,
-            status = "missing",
-        }, nil
+        return nil, nil
     end
 
     local position_ok = delta_position <= thresholds.position
@@ -258,6 +237,29 @@ local function validate_object(o, detections, thresholds)
     }, detected._idx
 end
 
+local function mismatched_or_missing(o, detections, thresholds, claimed)
+    local wrong_class, wrong_dist = nearest_any_match(o, detections, claimed)
+    if wrong_class and wrong_dist <= thresholds.position then
+        return {
+            id = o.id,
+            yolo_classes = o.yolo_classes,
+            ocr_values = o.ocr_values,
+            is_anchor = o.is_anchor,
+            status = "mismatched",
+            matched_label = wrong_class.label,
+            matched_confidence = wrong_class.confidence,
+            delta_position = wrong_dist,
+        }, wrong_class._idx
+    end
+    return {
+        id = o.id,
+        yolo_classes = yolo_classes_for(o),
+        ocr_values = o.ocr_values,
+        is_anchor = o.is_anchor,
+        status = "missing",
+    }, nil
+end
+
 local function validation(input)
     local thresholds = { position = DEFAULT_THRESHOLDS.position, rotation = DEFAULT_THRESHOLDS.rotation }
     local given = input.thresholds
@@ -272,12 +274,10 @@ local function validation(input)
 
     local expected_flat = flatten(input.expected or {}, 0.0, 0.0, {})
 
-    -- Tag each detection with a stable index so `validate_object`'s own
-    -- claimed-detection index can be checked off below — a plain
-    -- identity/reference check would work too, but an explicit `_idx`
-    -- (stripped back out before returning, since it's an internal
-    -- bookkeeping detail) is simplest given detections round-trip
-    -- through a marshaled Lua table, not the original one.
+    -- Tag each detection with a stable index so claimed-detection index
+    -- can be checked off below — a plain identity/reference check would
+    -- work too, but an explicit `_idx` (internal bookkeeping) is simplest
+    -- given detections round-trip through a marshaled Lua table.
     local detections = {}
     for i, d in ipairs(input.registered_detections or {}) do
         local tagged = { _idx = i }
@@ -287,17 +287,37 @@ local function validation(input)
         table.insert(detections, tagged)
     end
 
+    -- Two passes:
+    --   1) Claim same-class matches (so neighbors don't steal each other).
+    --   2) Only then decide mismatched vs missing from *unclaimed* boxes.
+    -- A removed part next to a correctly matched sibling must be "missing",
+    -- not "incorrect · wrong type" via the sibling's detection.
     local claimed = {}
     local objects = {}
+    local pending = {} -- indices into `objects` still needing pass 2
     local matched = 0
+
     for _, o in ipairs(expected_flat) do
-        local result, used_idx = validate_object(o, detections, thresholds)
-        table.insert(objects, result)
+        local result, used_idx = validate_same_class(o, detections, thresholds, claimed)
+        if result then
+            table.insert(objects, result)
+            if used_idx then
+                claimed[used_idx] = true
+            end
+            if result.status == "matched" then
+                matched = matched + 1
+            end
+        else
+            table.insert(objects, false) -- placeholder
+            table.insert(pending, { index = #objects, object = o })
+        end
+    end
+
+    for _, p in ipairs(pending) do
+        local result, used_idx = mismatched_or_missing(p.object, detections, thresholds, claimed)
+        objects[p.index] = result
         if used_idx then
             claimed[used_idx] = true
-        end
-        if result.status == "matched" then
-            matched = matched + 1
         end
     end
 
