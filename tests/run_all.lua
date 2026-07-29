@@ -4,7 +4,13 @@
 -- needs: `lua5.4 tests/run_all.lua`.
 
 local script_dir = (arg[0]):match("(.*/)") or "./"
-local suites = { "test_registration.lua", "test_validation.lua", "test_accumulator.lua", "test_presence_validator.lua" }
+local suites = {
+    "test_registration.lua",
+    "test_validation.lua",
+    "test_accumulator.lua",
+    "test_presence_validator.lua",
+    "test_presence_latch.lua",
+}
 
 local any_failed = false
 for _, suite in ipairs(suites) do

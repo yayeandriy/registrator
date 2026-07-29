@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `presence_validator.lua`, `accumulator.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -154,6 +154,35 @@ Content / presence check — **no spatial registration**. Used by the Constructo
 ```
 
 `status` is `"matched"` or `"missing"`. `match_kind` is `"yolo"` or `"ocr"`.
+
+## `presence_latch.lua`
+
+Sticky session merge after `presence_validator.lua` — **once matched, stay matched**.
+
+**Input:**
+
+```json
+{
+  "result": { /* PresenceValidationResult from presence_validator.lua */ },
+  "latched": [
+    { "key": "<uuid>|yolo", "object": { /* PresenceObjectValidation with status matched */ } }
+  ]
+}
+```
+
+- `latched` is optional / may be `[]` on the first tick.
+- `key` is optional on each entry (derived as `id|match_kind` when omitted).
+
+**Output:**
+
+```json
+{
+  "result": { /* same shape; sticky rows restored; matched/total/score recomputed */ },
+  "latched": [ { "key": "<uuid>|yolo", "object": { /* … */ } } ]
+}
+```
+
+Host stores `latched` between ticks and feeds it back. Spatial validation is unchanged.
 
 ## `accumulator.lua`
 
