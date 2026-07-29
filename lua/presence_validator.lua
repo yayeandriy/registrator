@@ -139,7 +139,9 @@ local function is_ocr_detection(d)
     if type(k) ~= "string" then
         return false
     end
-    return k:lower() == "ocr"
+    k = k:lower()
+    -- Server Gemma tags crops as `ocr:<class_group>`; treat those as OCR too.
+    return k == "ocr" or k:sub(1, 4) == "ocr:"
 end
 
 -- True when `needle` is accounted for by `hay` (either direction).

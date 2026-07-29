@@ -440,6 +440,27 @@ local legacy_yolo = run({
 t.eq(legacy_yolo.matched, 1, "legacy yolo_class: still matches")
 t.eq(legacy_yolo.objects[1].yolo_classes[1], "connector", "legacy yolo_class: stamped as array")
 
+-- Server Gemma kinds `ocr:<class_group>` must still count as OCR detections.
+local ocr_kind_prefix = run({
+    expected = {
+        {
+            id = "ocrkind0-0000-4000-8000-000000000001",
+            yolo_classes = {},
+            ocr_values = { "X04" },
+            presence = true,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = false,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "X04", confidence = 1.0, x = 0, y = 0, width = 1, height = 1, kind = "ocr:test_1" },
+    },
+})
+t.eq(ocr_kind_prefix.matched, 1, "ocr_kind_prefix: matches with kind ocr:<group>")
+t.eq(ocr_kind_prefix.extra, 0, "ocr_kind_prefix: OCR never EXTRA")
+
 if not t.summary("presence_validator") then
     os.exit(1)
 end
