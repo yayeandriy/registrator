@@ -157,7 +157,9 @@ Content / presence check — **no spatial registration**. Used by the Constructo
 
 ## `presence_latch.lua`
 
-Sticky session merge after `presence_validator.lua` — **once matched, stay matched**.
+Sticky session merge after `presence_validator.lua`:
+- **once matched, stay matched**
+- **once a YOLO extra is seen, stay listed** (so a 1–2 frame dropout cannot clear EXTRA and spuriously PASS)
 
 **Input:**
 
@@ -166,23 +168,26 @@ Sticky session merge after `presence_validator.lua` — **once matched, stay mat
   "result": { /* PresenceValidationResult from presence_validator.lua */ },
   "latched": [
     { "key": "<uuid>|yolo", "object": { /* PresenceObjectValidation with status matched */ } }
-  ]
+  ],
+  "latched_extras": [ { /* PresenceDetection (YOLO only) */ } ]
 }
 ```
 
-- `latched` is optional / may be `[]` on the first tick.
+- `latched` / `latched_extras` are optional / may be `[]` on the first tick.
 - `key` is optional on each entry (derived as `id|match_kind` when omitted).
+- OCR-kind extras are never sticky.
 
 **Output:**
 
 ```json
 {
-  "result": { /* same shape; sticky rows restored; matched/total/score recomputed */ },
-  "latched": [ { "key": "<uuid>|yolo", "object": { /* … */ } } ]
+  "result": { /* sticky rows + sticky YOLO extras; matched/total/score/extra recomputed */ },
+  "latched": [ { "key": "<uuid>|yolo", "object": { /* … */ } } ],
+  "latched_extras": [ { /* PresenceDetection */ } ]
 }
 ```
 
-Host stores `latched` between ticks and feeds it back. Spatial validation is unchanged.
+Host stores `latched` + `latched_extras` between ticks and feeds them back. Spatial validation uses a host-side extras latch (no Lua script).
 
 ## `accumulator.lua`
 

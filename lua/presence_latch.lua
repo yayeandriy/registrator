@@ -1,12 +1,17 @@
--- Presence latch — sticky "once matched, stay matched" for live inspect.
+-- Presence latch — sticky session merge for live inspect.
 --
 -- `presence_validator.lua` is deliberately stateless: each call scores only
--- the detections you send. Live camera hosts (iOS / web) need a session
--- rule on top: once a presence row (id + match_kind) has been matched, keep
--- it matched even if later frames miss it.
+-- the detections you send. Live camera hosts (iOS / web) need session rules
+-- on top:
+--   1. once a presence row (id + match_kind) has been matched, keep it matched
+--      even if later frames miss it
+--   2. once a YOLO extra has been seen, keep it listed even if later
+--      accumulator batches drop it for a few ticks (so EXTRA cannot flicker
+--      away and spuriously PASS)
 --
--- This script is that rule — pure function, same pattern as accumulator:
--- the host stores `latched` between ticks and feeds it back in.
+-- This script is those rules — pure function, same pattern as accumulator:
+-- the host stores `latched` / `latched_extras` between ticks and feeds them
+-- back in.
 --
 -- Pipeline position:
 --   detector → accumulator → presence_validator → presence_latch → results
@@ -18,15 +23,17 @@
 --       { key = "<id>|<match_kind>", object = PresenceObjectValidation },
 --       ...
 --     } | nil,
+--     latched_extras = { PresenceDetection, ... } | nil,
 --   }
 -- `key` is optional on input entries — when omitted it is derived from
 -- `object.id` + `object.match_kind` (same formula as the hosts used).
 --
 -- Output:
 --   {
---     result = { ... same shape, with sticky matched rows + recomputed
---                matched/total/score },
---     latched = { { key, object }, ... }  -- only matched entries, sorted
+--     result = { ... sticky matched rows + sticky YOLO extras;
+--                matched/total/score/extra recomputed },
+--     latched = { { key, object }, ... },       -- only matched entries
+--     latched_extras = { PresenceDetection, ... }  -- YOLO extras only
 --   }
 
 local function latch_key(o)
@@ -51,6 +58,150 @@ local function shallow_copy_object(o)
         matched_confidence = o.matched_confidence,
         match_kind = o.match_kind,
     }
+end
+
+local function is_ocr_kind(kind)
+    if kind == nil then
+        return false
+    end
+    return string.lower(tostring(kind)) == "ocr"
+        or string.find(string.lower(tostring(kind)), "ocr:", 1, true) == 1
+end
+
+-- Sticky extras: one row per *spatially distinct* unexpected object.
+-- Match / cluster by IoU (same threshold idea as accumulator.lua) so this
+-- works in camera-normalized [0,1] *and* board-unit space. Same class may
+-- appear multiple times when boxes do not overlap. OCR noise is never sticky.
+--
+-- Soft miss TTL: an unmatched sticky row is kept for MAX_MISSES ticks, then
+-- dropped. The host must round-trip `misses` on `latched_extras` (unknown
+-- fields are fine for Lua; typed hosts that strip them degrade to sticky
+-- forever on miss — IoU still prevents the per-tick append flood).
+local IOU_THRESH = 0.2
+local MAX_MISSES = 3
+
+local function extra_class_key(d)
+    local label = tostring(d.label or "")
+    local kind = tostring(d.kind or "yolo")
+    return label .. "|" .. kind
+end
+
+local function box_iou(a, b)
+    local ax = tonumber(a.x) or 0
+    local ay = tonumber(a.y) or 0
+    local aw = tonumber(a.width) or 0
+    local ah = tonumber(a.height) or 0
+    local bx = tonumber(b.x) or 0
+    local by = tonumber(b.y) or 0
+    local bw = tonumber(b.width) or 0
+    local bh = tonumber(b.height) or 0
+    local ax2, ay2 = ax + aw, ay + ah
+    local bx2, by2 = bx + bw, by + bh
+    local ix1, iy1 = math.max(ax, bx), math.max(ay, by)
+    local ix2, iy2 = math.min(ax2, bx2), math.min(ay2, by2)
+    local iw, ih = ix2 - ix1, iy2 - iy1
+    if iw <= 0.0 or ih <= 0.0 then
+        return 0.0
+    end
+    local inter = iw * ih
+    local union = aw * ah + bw * bh - inter
+    if union <= 0.0 then
+        return 0.0
+    end
+    return inter / union
+end
+
+local function shallow_copy_extra(d, misses)
+    return {
+        label = d.label,
+        confidence = d.confidence,
+        x = d.x,
+        y = d.y,
+        width = d.width,
+        height = d.height,
+        kind = d.kind,
+        misses = misses or 0,
+    }
+end
+
+local function public_extra(d)
+    return {
+        label = d.label,
+        confidence = d.confidence,
+        x = d.x,
+        y = d.y,
+        width = d.width,
+        height = d.height,
+        kind = d.kind,
+    }
+end
+
+-- Collapse same-class detections that overlap in one batch.
+local function cluster_frame(list)
+    local candidates = {}
+    for _, d in ipairs(list or {}) do
+        if d and not is_ocr_kind(d.kind) then
+            candidates[#candidates + 1] = d
+        end
+    end
+    table.sort(candidates, function(a, b)
+        return (tonumber(a.confidence) or 0) > (tonumber(b.confidence) or 0)
+    end)
+    local kept = {}
+    for _, d in ipairs(candidates) do
+        local too_close = false
+        for _, k in ipairs(kept) do
+            if extra_class_key(k) == extra_class_key(d) and box_iou(k, d) >= IOU_THRESH then
+                too_close = true
+                break
+            end
+        end
+        if not too_close then
+            kept[#kept + 1] = shallow_copy_extra(d, 0)
+        end
+    end
+    return kept
+end
+
+local function merge_extras(prior, current)
+    local prior_list = {}
+    for _, d in ipairs(prior or {}) do
+        if d and not is_ocr_kind(d.kind) then
+            prior_list[#prior_list + 1] = shallow_copy_extra(d, tonumber(d.misses) or 0)
+        end
+    end
+    local curr_list = cluster_frame(current)
+    local used_curr = {}
+    local out = {}
+
+    for _, p in ipairs(prior_list) do
+        local best_i, best_iou = nil, IOU_THRESH
+        for i, c in ipairs(curr_list) do
+            if not used_curr[i] and extra_class_key(c) == extra_class_key(p) then
+                local iou = box_iou(p, c)
+                if iou >= best_iou then
+                    best_iou = iou
+                    best_i = i
+                end
+            end
+        end
+        if best_i ~= nil then
+            used_curr[best_i] = true
+            out[#out + 1] = shallow_copy_extra(curr_list[best_i], 0)
+        else
+            local misses = (tonumber(p.misses) or 0) + 1
+            if misses <= MAX_MISSES then
+                out[#out + 1] = shallow_copy_extra(p, misses)
+            end
+        end
+    end
+
+    for i, c in ipairs(curr_list) do
+        if not used_curr[i] then
+            out[#out + 1] = shallow_copy_extra(c, 0)
+        end
+    end
+    return out
 end
 
 local function presence_latch(input)
@@ -102,16 +253,23 @@ local function presence_latch(input)
         return a.key < b.key
     end)
 
+    local extras = merge_extras(input.latched_extras, result.extra_detections)
+    local public_extras = {}
+    for _, d in ipairs(extras) do
+        public_extras[#public_extras + 1] = public_extra(d)
+    end
+
     return {
         result = {
             objects = objects,
-            extra_detections = result.extra_detections or {},
+            extra_detections = public_extras,
             score = total > 0 and (matched / total) or 0.0,
             matched = matched,
             total = total,
-            extra = result.extra or 0,
+            extra = #public_extras,
         },
         latched = latched_out,
+        latched_extras = extras,
     }
 end
 

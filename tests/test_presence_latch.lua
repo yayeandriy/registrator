@@ -99,4 +99,155 @@ local empty = run({
 t.eq(empty.result.matched, 0, "empty: still missing")
 t.eq(#empty.latched, 0, "empty: no latch entries")
 
-print("test_presence_latch: ok")
+-- YOLO extras stick across a 1–2 frame dropout (cannot spuriously PASS).
+local function extra(label, x, y)
+    return {
+        label = label,
+        confidence = 0.9,
+        x = x,
+        y = y,
+        width = 0.1,
+        height = 0.1,
+        kind = "yolo",
+    }
+end
+
+local with_extra = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = { extra("capacitor", 0.42, 0.55) },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 1,
+    },
+    latched = {},
+    latched_extras = {},
+})
+t.eq(with_extra.result.extra, 1, "extra: first tick lists YOLO extra")
+t.eq(#with_extra.latched_extras, 1, "extra: latched_extras size")
+
+local dropout = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = {},
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 0,
+    },
+    latched = with_extra.latched,
+    latched_extras = with_extra.latched_extras,
+})
+t.eq(dropout.result.matched, 1, "extra: still matched")
+t.eq(dropout.result.extra, 1, "extra: sticky across dropout")
+t.eq(dropout.result.extra_detections[1].label, "capacitor", "extra: keeps label")
+
+-- OCR extras are never sticky.
+local ocr_noise = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = {
+            {
+                label = "SN-9",
+                confidence = 0.8,
+                x = 0.2,
+                y = 0.2,
+                width = 0.1,
+                height = 0.05,
+                kind = "ocr",
+            },
+        },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 1,
+    },
+})
+t.eq(ocr_noise.result.extra, 0, "ocr: not sticky / not listed as EXTRA")
+t.eq(#ocr_noise.latched_extras, 0, "ocr: no latched extras")
+
+-- Overlapping same-class boxes (IoU ≥ 0.2) collapse to one sticky row.
+local near = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = {
+            extra("capacitor", 0.42, 0.55),
+            extra("capacitor", 0.44, 0.56),
+        },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 2,
+    },
+    latched = with_extra.latched,
+    latched_extras = with_extra.latched_extras,
+})
+t.eq(near.result.extra, 1, "near: IoU-cluster same-class overlap to one row")
+
+-- Non-overlapping same-class extras are distinct objects.
+local two = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = {
+            extra("connector", 0.10, 0.10),
+            extra("connector", 0.40, 0.50),
+        },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 2,
+    },
+    latched = near.latched,
+    latched_extras = near.latched_extras,
+})
+t.eq(two.result.extra, 3, "two: sticky capacitor + two far connectors")
+
+local two_jitter = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = {
+            -- IoU-overlap with the two prior connectors + one brand-new far box.
+            extra("connector", 0.11, 0.11),
+            extra("connector", 0.41, 0.51),
+            extra("connector", 0.70, 0.20),
+        },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 3,
+    },
+    latched = two.latched,
+    latched_extras = two.latched_extras,
+})
+t.eq(two_jitter.result.extra, 4, "two_jitter: prior three + new far connector")
+
+-- Soft miss TTL (MAX_MISSES=3). Capacitor was absent from `two` and
+-- `two_jitter`, so it enters empty ticks already at misses=2; connectors
+-- were refreshed in two_jitter (misses=0).
+local function empty_tick(prior)
+    return run({
+        result = {
+            objects = { obj(ID, "yolo", "matched", "connector") },
+            extra_detections = {},
+            score = 1.0,
+            matched = 1,
+            total = 1,
+            extra = 0,
+        },
+        latched = prior.latched,
+        latched_extras = prior.latched_extras,
+    })
+end
+local held = empty_tick(two_jitter)
+t.eq(held.result.extra, 4, "ttl t1: all four held")
+held = empty_tick(held)
+t.eq(held.result.extra, 3, "ttl t2: capacitor expires")
+held = empty_tick(held)
+t.eq(held.result.extra, 3, "ttl t3: connectors still held")
+held = empty_tick(held)
+t.eq(held.result.extra, 0, "ttl t4: connectors expire")
+
+if not t.summary("presence_latch") then
+    os.exit(1)
+end
