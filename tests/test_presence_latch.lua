@@ -61,11 +61,17 @@ t.close(second.result.score, 1.0, 1e-9, "second: score")
 
 -- Independent match_kind rows (YOLO vs OCR) latch separately.
 local OCR_ID = ID
+local function ocr_obj(id, status, needle, label)
+    local o = obj(id, "ocr", status, label)
+    o.yolo_classes = nil
+    o.ocr_values = { needle }
+    return o
+end
 local dual_miss = run({
     result = {
         objects = {
             obj(OCR_ID, "yolo", "missing", nil),
-            obj(OCR_ID, "ocr", "missing", nil),
+            ocr_obj(OCR_ID, "missing", "SN-42", nil),
         },
         extra_detections = {},
         score = 0.0,
@@ -75,8 +81,8 @@ local dual_miss = run({
     },
     latched = {
         {
-            key = OCR_ID .. "|ocr",
-            object = obj(OCR_ID, "ocr", "matched", "SN-42"),
+            key = OCR_ID .. "|ocr|SN-42",
+            object = ocr_obj(OCR_ID, "matched", "SN-42", "SN-42"),
         },
     },
 })
@@ -84,6 +90,32 @@ t.eq(dual_miss.result.matched, 1, "dual: only OCR latched")
 t.eq(dual_miss.result.objects[1].status, "missing", "dual: YOLO still missing")
 t.eq(dual_miss.result.objects[2].status, "matched", "dual: OCR sticky")
 t.eq(dual_miss.result.objects[2].matched_label, "SN-42", "dual: OCR label")
+
+-- Multi-text AND: each OCR needle latches on its own key.
+local multi = run({
+    result = {
+        objects = {
+            ocr_obj(OCR_ID, "missing", "2020", nil),
+            ocr_obj(OCR_ID, "missing", "P06", nil),
+        },
+        extra_detections = {},
+        score = 0.0,
+        matched = 0,
+        total = 2,
+        extra = 0,
+    },
+    latched = {
+        {
+            key = OCR_ID .. "|ocr|2020",
+            object = ocr_obj(OCR_ID, "matched", "2020", "2020"),
+        },
+    },
+})
+t.eq(multi.result.matched, 1, "multi: only 2020 sticky")
+t.eq(multi.result.objects[1].status, "matched", "multi: 2020 latched")
+t.eq(multi.result.objects[2].status, "missing", "multi: P06 still missing")
+t.eq(#multi.latched, 1, "multi: one latch entry")
+t.eq(multi.latched[1].key, OCR_ID .. "|ocr|2020", "multi: latch key includes needle")
 
 -- Empty prior + all missing → unchanged.
 local empty = run({
@@ -247,6 +279,57 @@ held = empty_tick(held)
 t.eq(held.result.extra, 3, "ttl t3: connectors still held")
 held = empty_tick(held)
 t.eq(held.result.extra, 0, "ttl t4: connectors expire")
+
+-- Catalog-anchored extras (`kind == "extra"`, see `presence_validator.lua`'s
+-- `anchor_extras` toggle) identify by position (IoU) alone, and keep the
+-- last confirmed name even on a tick whose OCR briefly fails to resolve it.
+local function catalog_extra(x, y, matched_label)
+    return {
+        label = matched_label or "test_1_lower",
+        confidence = 0.9,
+        x = x,
+        y = y,
+        width = 0.4,
+        height = 0.45,
+        kind = "extra",
+        matched_label = matched_label,
+    }
+end
+
+local named_first = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = { catalog_extra(0.6, 0.0, "Test D07") },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 1,
+    },
+    latched = {},
+    latched_extras = {},
+})
+t.eq(named_first.result.extra_detections[1].matched_label, "Test D07", "catalog: first tick keeps confirmed name")
+
+-- Same physical box (overlapping position), but this tick's OCR came back
+-- ambiguous — sticky merge must not drop the previously-confirmed name.
+local named_ambiguous_tick = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "connector") },
+        extra_detections = { catalog_extra(0.61, 0.01, nil) },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 1,
+    },
+    latched = named_first.latched,
+    latched_extras = named_first.latched_extras,
+})
+t.eq(named_ambiguous_tick.result.extra, 1, "catalog: still one sticky row")
+t.eq(
+    named_ambiguous_tick.result.extra_detections[1].matched_label,
+    "Test D07",
+    "catalog: name survives an ambiguous OCR tick"
+)
 
 if not t.summary("presence_latch") then
     os.exit(1)

@@ -109,24 +109,56 @@ Content / presence check — **no spatial registration**. Used by the Constructo
   "detections": [
     { "label": "connector", "confidence": 0.9, "x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2, "kind": "yolo" },
     { "label": "59364-7206143-1-4363", "confidence": 1.0, "x": 0.1, "y": 0.4, "width": 0.6, "height": 0.1, "kind": "ocr" }
-  ]
+  ],
+  "catalog": [
+    { "id": "<uuid>", "name": "Test D07", "yolo_classes": ["test_1_lower", "test_1_upper"], "ocr_values": ["D07"] }
+  ],
+  "opts": { "anchor_extras": true }
 }
 ```
 
-- Participates when `presence: true` **or** non-empty `ocr_value` (same membership as Constructor Presence rail). Objects lacking both a non-empty `ocr_value` and a non-empty `yolo_class` are skipped.
-- Detection coordinates are ignored (presence only).
-- `kind`: `"ocr"` → OCR string; anything else (including omitted) → YOLO class label.
+- Participates when `presence: true` **or** non-empty `ocr_values` (same membership as Constructor Presence rail).
+- Detection coordinates gate OCR when the object also expects YOLO (center of OCR box inside the AABB union of the object's claimed YOLO class boxes).
+- `kind`: `"ocr"` / `ocr:*` → OCR string; anything else (including omitted) → YOLO class label.
+- `catalog` / `opts` are both optional and off by default (zero behavior change for any caller that omits them) — see "Catalog-anchored extras" below.
 
-**Matching** (modalities independent — no cross-fallback). One ReferenceObject with both fields yields **two** result rows:
+**Matching** (modalities independent — no cross-fallback). One ReferenceObject with YOLO + N texts yields **1 + N** result rows:
 
 | Check | When | Rule |
 |-------|------|------|
-| OCR | non-empty `ocr_value` | Loose text match against OCR labels (case-insensitive; whitespace/punctuation stripped; either side may contain the other when the shorter token is ≥3 chars). One OCR string may satisfy multiple expected values. |
-| YOLO | `presence: true`, non-empty `yolo_class`, and a `vision_model_id` | Exact `label` match on a non-OCR detection. First claim wins (greedy). Slug-only class with YOLO model None is ignored. |
+| OCR | non-empty `ocr_values` | One required row per expected string (AND). Loose text match. When the object also has a YOLO expectation, the OCR detection center must lie inside the union of that object's assigned instance boxes. |
+| YOLO | `presence: true`, non-empty `yolo_classes`, and a `vision_model_id` | Full class-set **instance** (one box per listed class, clustered by proximity). Objects that share the same class set compete; assignment prefers the instance whose interior OCR best matches (unique needles outweigh shared text). |
 
 **Extras** (modality-scoped):
 - Unclaimed YOLO boxes when at least one YOLO check ran
 - OCR strings that satisfied no expected `ocr_value` when at least one OCR check ran
+
+**Catalog-anchored extras — toggleable module (`opts.anchor_extras`):**
+
+Off by default. When a host passes `catalog` (every project component, not
+just the active profile — same `yolo_classes`/`ocr_values` shape as an
+expected object, plus `name`) and sets `opts.anchor_extras = true`,
+unclaimed YOLO boxes are clustered into full-class-set instances per
+catalog signature — the same proximity clustering used for competing
+profile objects, i.e. "anchor a class by the other detections around it in
+the same frame" — and named from the catalog via interior OCR:
+
+- A signature owned by exactly **one** catalog component is unambiguous —
+  named without needing OCR at all.
+- A signature shared by several components (e.g. two stamps that only
+  differ by a printed code) requires OCR to disambiguate, using the same
+  unique-vs-shared-needle rule as competing profile objects. No OCR yet →
+  the instance is still emitted (never silently dropped) with
+  `matched_label: null`; `presence_latch.lua` keeps the sticky name once
+  OCR confirms it, even if a later tick's OCR briefly misses again.
+- Boxes whose class does not belong to any catalog signature at all still
+  come back as plain unclaimed rows (unchanged from the always-on shape).
+- This path ignores whether any profile check ran (`expect_yolo`) — an
+  unexpected component may not share any class with the active profile.
+
+`extra_detections` rows produced this way carry `kind: "extra"` and an
+extra `matched_label` field (the catalog component name, or `null` when
+ambiguous) alongside the usual `label`/`x`/`y`/`width`/`height`.
 
 **Output:**
 
@@ -160,6 +192,9 @@ Content / presence check — **no spatial registration**. Used by the Constructo
 Sticky session merge after `presence_validator.lua`:
 - **once matched, stay matched**
 - **once a YOLO extra is seen, stay listed** (so a 1–2 frame dropout cannot clear EXTRA and spuriously PASS)
+- **once a catalog-anchored extra (`kind: "extra"`) is named, keep that
+  name for the same physical box (IoU)** even on a tick whose OCR read
+  fails and comes back ambiguous (`matched_label: null`)
 
 **Input:**
 
@@ -174,7 +209,8 @@ Sticky session merge after `presence_validator.lua`:
 ```
 
 - `latched` / `latched_extras` are optional / may be `[]` on the first tick.
-- `key` is optional on each entry (derived as `id|match_kind` when omitted).
+- `key` is optional on each entry (derived as `id|match_kind` for YOLO,
+  `id|ocr|<needle>` for OCR when omitted).
 - OCR-kind extras are never sticky.
 
 **Output:**

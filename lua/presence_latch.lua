@@ -3,11 +3,17 @@
 -- `presence_validator.lua` is deliberately stateless: each call scores only
 -- the detections you send. Live camera hosts (iOS / web) need session rules
 -- on top:
---   1. once a presence row (id + match_kind) has been matched, keep it matched
---      even if later frames miss it
+--   1. once a presence row (id + match_kind [+ OCR needle]) has been matched,
+--      keep it matched even if later frames miss it
 --   2. once a YOLO extra has been seen, keep it listed even if later
 --      accumulator batches drop it for a few ticks (so EXTRA cannot flicker
 --      away and spuriously PASS)
+--   3. once a catalog-anchored extra (`kind == "extra"`, see
+--      `presence_validator.lua`'s `anchor_extras` toggle) is named, keep
+--      that name for the same physical box (IoU) even on a tick whose OCR
+--      read fails and comes back ambiguous (`matched_label == nil`) — the
+--      box's identity should not flicker just because one frame's OCR did
+--      not resolve the printed code
 --
 -- This script is those rules — pure function, same pattern as accumulator:
 -- the host stores `latched` / `latched_extras` between ticks and feeds them
@@ -20,13 +26,14 @@
 --   {
 --     result = { objects, extra_detections, score, matched, total, extra },
 --     latched = {
---       { key = "<id>|<match_kind>", object = PresenceObjectValidation },
+--       { key = "<id>|<match_kind>[|<ocr_needle>]", object = PresenceObjectValidation },
 --       ...
 --     } | nil,
 --     latched_extras = { PresenceDetection, ... } | nil,
 --   }
 -- `key` is optional on input entries — when omitted it is derived from
--- `object.id` + `object.match_kind` (same formula as the hosts used).
+-- `object.id` + `object.match_kind` (+ first `ocr_values` entry for OCR rows,
+-- so multi-text AND rows latch independently).
 --
 -- Output:
 --   {
@@ -41,7 +48,17 @@ local function latch_key(o)
     if kind == nil then
         kind = ""
     end
-    return tostring(o.id) .. "|" .. tostring(kind)
+    local key = tostring(o.id) .. "|" .. tostring(kind)
+    -- OCR AND emits one row per needle; include the needle so latches do not
+    -- collide when the same object id has multiple OCR expectations.
+    if string.lower(tostring(kind)) == "ocr" then
+        local needle = ""
+        if type(o.ocr_values) == "table" and o.ocr_values[1] ~= nil then
+            needle = tostring(o.ocr_values[1])
+        end
+        key = key .. "|" .. needle
+    end
+    return key
 end
 
 local function shallow_copy_object(o)
@@ -80,10 +97,21 @@ end
 local IOU_THRESH = 0.2
 local MAX_MISSES = 3
 
-local function extra_class_key(d)
-    local label = tostring(d.label or "")
-    local kind = tostring(d.kind or "yolo")
-    return label .. "|" .. kind
+-- Catalog-anchored extras (`kind == "extra"`) identify by position (IoU)
+-- alone — the label is a best-effort name that may legitimately flip
+-- between an OCR-confirmed name and the ambiguous fallback tick to tick.
+-- Plain YOLO extras still require the same class label (position alone
+-- is not enough to tell two adjacent same-class boxes apart).
+local function extra_kind_matches(a, b)
+    local ak = tostring(a.kind or "yolo")
+    local bk = tostring(b.kind or "yolo")
+    if ak ~= bk then
+        return false
+    end
+    if ak == "extra" then
+        return true
+    end
+    return tostring(a.label or "") == tostring(b.label or "")
 end
 
 local function box_iou(a, b)
@@ -120,6 +148,7 @@ local function shallow_copy_extra(d, misses)
         width = d.width,
         height = d.height,
         kind = d.kind,
+        matched_label = d.matched_label,
         misses = misses or 0,
     }
 end
@@ -133,6 +162,7 @@ local function public_extra(d)
         width = d.width,
         height = d.height,
         kind = d.kind,
+        matched_label = d.matched_label,
     }
 end
 
@@ -151,7 +181,7 @@ local function cluster_frame(list)
     for _, d in ipairs(candidates) do
         local too_close = false
         for _, k in ipairs(kept) do
-            if extra_class_key(k) == extra_class_key(d) and box_iou(k, d) >= IOU_THRESH then
+            if extra_kind_matches(k, d) and box_iou(k, d) >= IOU_THRESH then
                 too_close = true
                 break
             end
@@ -177,7 +207,7 @@ local function merge_extras(prior, current)
     for _, p in ipairs(prior_list) do
         local best_i, best_iou = nil, IOU_THRESH
         for i, c in ipairs(curr_list) do
-            if not used_curr[i] and extra_class_key(c) == extra_class_key(p) then
+            if not used_curr[i] and extra_kind_matches(p, c) then
                 local iou = box_iou(p, c)
                 if iou >= best_iou then
                     best_iou = iou
@@ -187,7 +217,28 @@ local function merge_extras(prior, current)
         end
         if best_i ~= nil then
             used_curr[best_i] = true
-            out[#out + 1] = shallow_copy_extra(curr_list[best_i], 0)
+            local c = curr_list[best_i]
+            -- Same physical box, but this tick's OCR did not resolve a
+            -- name where the sticky prior one did — keep the known name.
+            local keep_label = c.label
+            local keep_matched = c.matched_label
+            if
+                (c.matched_label == nil or c.matched_label == "")
+                and p.matched_label ~= nil and p.matched_label ~= ""
+            then
+                keep_label = p.matched_label
+                keep_matched = p.matched_label
+            end
+            out[#out + 1] = shallow_copy_extra({
+                label = keep_label,
+                confidence = c.confidence,
+                x = c.x,
+                y = c.y,
+                width = c.width,
+                height = c.height,
+                kind = c.kind,
+                matched_label = keep_matched,
+            }, 0)
         else
             local misses = (tonumber(p.misses) or 0) + 1
             if misses <= MAX_MISSES then
