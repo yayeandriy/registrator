@@ -178,18 +178,112 @@ end
 -- — the "for now, each anchor has a unique class for this preset" rule
 -- (see the "Registration" TODO) makes this a first-match-wins lookup, not
 -- a real assignment problem.
+local function aspect_cost(detected, expected)
+    -- Axis-aligned detection box vs local expected box. A ~58° block's AABB
+    -- is nearly square; the upright anchor stays tall — enough to tell them
+    -- apart when both share the "block" class.
+    local da = (detected.width or 0.0) / math.max(detected.height or 1e-6, 1e-6)
+    local ea = (expected.width or 0.0) / math.max(expected.height or 1e-6, 1e-6)
+    return math.abs(math.log(math.max(da, 1e-6)) - math.log(math.max(ea, 1e-6)))
+end
+
+local function pick_detection_for_expected(o, expected_flat, detections)
+    -- When several detections share this object's class (two "block" parts),
+    -- first-match-wins binds the wrong one and poisons the whole-frame
+    -- transform. Prefer the candidate whose AABB aspect matches the expected
+    -- local box; tie-break by board/frame Y-rank so the lower board anchor
+    -- binds the lower-on-screen detection when the camera faces the board.
+    local classes = o.yolo_classes or {}
+    local candidates = {}
+    for _, d in ipairs(detections) do
+        if label_in_classes(d.label, classes) then
+            table.insert(candidates, d)
+        end
+    end
+    if #candidates == 0 then
+        return nil
+    end
+
+    local function shares_class(other)
+        for _, c in ipairs(other.yolo_classes or {}) do
+            if label_in_classes(c, classes) then
+                return true
+            end
+        end
+        for _, c in ipairs(classes) do
+            if label_in_classes(c, other.yolo_classes or {}) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local peers = {}
+    for _, e in ipairs(expected_flat) do
+        if shares_class(e) then
+            local ex, ey = center(e)
+            table.insert(peers, { ref = e, x = ex, y = ey })
+        end
+    end
+    table.sort(peers, function(a, b)
+        if math.abs(a.y - b.y) > 1.0 then
+            return a.y < b.y
+        end
+        return a.x < b.x
+    end)
+
+    local rank = 1
+    for i, p in ipairs(peers) do
+        if p.ref == o then
+            rank = i
+            break
+        end
+    end
+
+    table.sort(candidates, function(a, b)
+        local ax = a.x + a.width / 2.0
+        local ay = a.y + a.height / 2.0
+        local bx = b.x + b.width / 2.0
+        local by = b.y + b.height / 2.0
+        if math.abs(ay - by) > 1e-4 then
+            return ay < by
+        end
+        return ax < bx
+    end)
+
+    -- Aspect is the primary signal; Y-rank breaks near-ties.
+    local best, best_score = nil, math.huge
+    for i, d in ipairs(candidates) do
+        local cost = aspect_cost(d, o)
+        local rank_pen = math.abs(i - rank) * 0.15
+        local score = cost + rank_pen
+        if score < best_score then
+            best_score = score
+            best = d
+        end
+    end
+
+    -- Reject a lone wrong-shape detection rather than fitting a bad transform
+    -- (e.g. only the diagonal block visible while the tall anchor is expected).
+    if best and aspect_cost(best, o) > 0.7 and #peers > 1 then
+        return nil
+    end
+    return best
+end
+
+-- Matches each anchor reference object to a detection of its class.
+-- Same-class duplicates are disambiguated by aspect + Y-rank (see
+-- `pick_detection_for_expected`) — not first-match-wins.
 local function match_anchors(expected_flat, frames)
     local matches = {}
     for _, o in ipairs(expected_flat) do
         if o.is_anchor then
             for _, frame in ipairs(frames) do
-                local found = nil
-                for _, d in ipairs(frame.detections or {}) do
-                    if label_in_classes(d.label, o.yolo_classes or {}) then
-                        found = d
-                        break
-                    end
-                end
+                local found = pick_detection_for_expected(
+                    o,
+                    expected_flat,
+                    frame.detections or {}
+                )
                 if found then
                     table.insert(matches, { expected = o, detected = found })
                     break
@@ -200,10 +294,6 @@ local function match_anchors(expected_flat, frames)
     return matches
 end
 
--- `mlua`'s serde bridge represents a Rust `None` as a special sentinel
--- (userdata), not plain Lua `nil` — `type(...) == "table"` is the
--- reliable way to tell "a real quad was given" from either that sentinel
--- or actual `nil`.
 local function quad_corners(detected)
     local corners = detected.corners
     if type(corners) == "table" and #corners == 4 then
