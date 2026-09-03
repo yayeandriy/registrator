@@ -31,7 +31,7 @@
 --         status = "matched" | "missing" | "mismatched" | "mispositioned" | "misrotated" | "mispositioned_misrotated",
 --         matched_label, matched_confidence,   -- nil when status == "missing"
 --         delta_position,                      -- board units; nil when status == "missing"
---         delta_rotation,                       -- degrees, 0..90; nil when status == "missing", "mismatched", or neither side has an orientation to compare
+--         delta_rotation,                       -- degrees; nil when status == "missing", "mismatched", or neither side has an orientation to compare. Range depends on the object's symmetry period (≤ period/2; for "180" that is 0..90).
 --       },
 --       ...
 --     },
@@ -123,6 +123,7 @@ local function flatten(objects, origin_x, origin_y, out)
             height = o.boundary.height,
             rotation = o.rotation or 0.0,
             is_anchor = o.is_anchor,
+            symmetry = o.symmetry or "inf",
         })
         if o.children then
             flatten(o.children, x, y, out)
@@ -143,10 +144,36 @@ end
 -- A rectangle looks identical rotated by 180°, so only the *minimal*
 -- difference within that period is meaningful — e.g. an object expected
 -- at 5° and detected at 183° is really only 2° off, not 178°.
-local function angle_diff_mod_180(a, b)
-    local diff = (a - b) % 180.0
-    if diff > 90.0 then
-        diff = 180.0 - diff
+--
+-- Generalised for per-object `symmetry` (wire / DB values):
+--   "0"   — fully symmetrical: any orientation accepted (delta 0)
+--   "60"  — hexagonal (period 60°)
+--   "90"  — square (period 90°)
+--   "120" — triangular (period 120°)
+--   "180" — rectangular (period 180°)
+--   "inf" — no symmetry: full-circle compare (period 360° → delta in [0, 180])
+-- Missing / unknown → "inf" (product default).
+local function angle_diff_with_symmetry(a, b, symmetry)
+    local sym = tostring(symmetry or "inf")
+    if sym == "0" then
+        return 0.0
+    end
+    local period
+    if sym == "inf" then
+        period = 360.0
+    else
+        period = tonumber(sym) or 360.0
+        if period <= 0 then
+            return 0.0
+        end
+    end
+    local half = period / 2.0
+    local diff = (a - b) % period
+    if diff < 0 then
+        diff = diff + period
+    end
+    if diff > half then
+        diff = period - diff
     end
     return diff
 end
@@ -209,7 +236,11 @@ local function validate_same_class(o, detections, thresholds, claimed)
     local delta_rotation = nil
     local rotation_ok = true
     if detected.rotation ~= nil and type(detected.rotation) == "number" then
-        delta_rotation = angle_diff_mod_180(detected.rotation, o.rotation or 0.0)
+        delta_rotation = angle_diff_with_symmetry(
+            detected.rotation,
+            o.rotation or 0.0,
+            o.symmetry
+        )
         rotation_ok = delta_rotation <= thresholds.rotation
     end
 
