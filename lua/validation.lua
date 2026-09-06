@@ -81,6 +81,42 @@ local function non_empty(s)
     return type(s) == "string" and trim(s) ~= ""
 end
 
+local function normalize_alnum(s)
+    if type(s) ~= "string" then
+        return ""
+    end
+    local t = trim(s):lower()
+    t = t:gsub("%s+", "")
+    t = t:gsub("[^%w]", "")
+    return t
+end
+
+-- Same loose OCR match as `presence_validator.lua` (`ocr_text_match`).
+local function ocr_text_match(hay, needle)
+    local h = normalize_alnum(hay)
+    local n = normalize_alnum(needle)
+    if h == "" or n == "" then
+        return false
+    end
+    if h:find(n, 1, true) then
+        return true
+    end
+    if #h >= 3 and n:find(h, 1, true) then
+        return true
+    end
+    local hd = h:gsub("%D", "")
+    local nd = n:gsub("%D", "")
+    if hd ~= "" and nd ~= "" then
+        if hd:find(nd, 1, true) then
+            return true
+        end
+        if #hd >= 3 and nd:find(hd, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
 local function yolo_classes_for(o)
     if type(o.yolo_classes) == "table" then
         local out = {}
@@ -99,10 +135,60 @@ local function yolo_classes_for(o)
     return {}
 end
 
+local function ocr_values_for(o)
+    if type(o.ocr_values) == "table" then
+        local out = {}
+        for _, v in ipairs(o.ocr_values) do
+            if non_empty(v) then
+                table.insert(out, trim(v))
+            end
+        end
+        if #out > 0 then
+            return out
+        end
+    end
+    if non_empty(o.ocr_value) then
+        return { trim(o.ocr_value) }
+    end
+    -- Text-only placement with no hydrated needles: the object name is
+    -- the expected string (overlay / verdict both show it).
+    if #(yolo_classes_for(o)) == 0 and non_empty(o.name) then
+        return { trim(o.name) }
+    end
+    return {}
+end
+
 local function label_in_classes(label, classes)
     for _, class in ipairs(classes) do
         if label == class then
             return true
+        end
+    end
+    return false
+end
+
+local function label_matches_object(label, o)
+    if label_in_classes(label, o.yolo_classes or {}) then
+        return true
+    end
+    -- Text-only Spatial placements have no YOLO class — match OCR needles
+    -- the same way Presence does (overlay "TEXT" vs expected "TEXT A").
+    if #(o.yolo_classes or {}) == 0 then
+        for _, needle in ipairs(o.ocr_values or {}) do
+            if ocr_text_match(label, needle) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function label_is_expected_ocr(label, expected_flat)
+    for _, o in ipairs(expected_flat) do
+        for _, needle in ipairs(o.ocr_values or {}) do
+            if ocr_text_match(label, needle) then
+                return true
+            end
         end
     end
     return false
@@ -117,6 +203,7 @@ local function flatten(objects, origin_x, origin_y, out)
         table.insert(out, {
             id = o.id,
             yolo_classes = yolo_classes_for(o),
+            ocr_values = ocr_values_for(o),
             x = x,
             y = y,
             width = o.boundary.width,
@@ -178,13 +265,13 @@ local function angle_diff_with_symmetry(a, b, symmetry)
     return diff
 end
 
--- Nearest same-class detection to this expected object's center among
--- detections not yet claimed by another expected object.
+-- Nearest same-class (or same-text) detection to this expected object's
+-- center among detections not yet claimed by another expected object.
 local function nearest_match(o, detections, claimed)
     local ex, ey = center(o)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        if not claimed[d._idx] and label_in_classes(d.label, o.yolo_classes or {}) then
+        if not claimed[d._idx] and label_matches_object(d.label, o) then
             local dx, dy = center(d)
             local dist = distance(ex, ey, dx, dy)
             if dist < best_dist then
@@ -202,11 +289,16 @@ end
 -- Must ignore detections already claimed as another object's match:
 -- otherwise a neighbor capacitor that correctly matched `capacitor3`
 -- also makes a removed `capacitor4` read as "incorrect · wrong type".
-local function nearest_any_match(o, detections, claimed)
+-- OCR leftovers on a YOLO slot are not class-confusion — they belong
+-- to a text placement (or unused overlay text).
+local function nearest_any_match(o, detections, claimed, expected_flat)
     local ex, ey = center(o)
+    local skip_ocr = #(o.yolo_classes or {}) > 0
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        if not claimed[d._idx] then
+        if not claimed[d._idx]
+            and not (skip_ocr and label_is_expected_ocr(d.label, expected_flat))
+        then
             local dx, dy = center(d)
             local dist = distance(ex, ey, dx, dy)
             if dist < best_dist then
@@ -268,8 +360,8 @@ local function validate_same_class(o, detections, thresholds, claimed)
     }, detected._idx
 end
 
-local function mismatched_or_missing(o, detections, thresholds, claimed)
-    local wrong_class, wrong_dist = nearest_any_match(o, detections, claimed)
+local function mismatched_or_missing(o, detections, thresholds, claimed, expected_flat)
+    local wrong_class, wrong_dist = nearest_any_match(o, detections, claimed, expected_flat)
     if wrong_class and wrong_dist <= thresholds.position then
         return {
             id = o.id,
@@ -345,7 +437,13 @@ local function validation(input)
     end
 
     for _, p in ipairs(pending) do
-        local result, used_idx = mismatched_or_missing(p.object, detections, thresholds, claimed)
+        local result, used_idx = mismatched_or_missing(
+            p.object,
+            detections,
+            thresholds,
+            claimed,
+            expected_flat
+        )
         objects[p.index] = result
         if used_idx then
             claimed[used_idx] = true

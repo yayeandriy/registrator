@@ -110,6 +110,64 @@ t.eq(c3.status, "matched", "neighbor: first capacitor matched")
 t.eq(c4.status, "missing", "neighbor: empty slot is missing, not mismatched")
 t.eq(neighbor_result.extra, 0, "neighbor: sole detection claimed by match")
 
+-- Text-only Spatial placement: overlay OCR "TEXT" satisfies expected "TEXT A".
+local text_result = (function()
+    local input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000tx",
+                yolo_classes = {},
+                ocr_values = { "TEXT A" },
+                boundary = { x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+        },
+        registered_detections = {
+            { label = "TEXT", confidence = 0.9, x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+        },
+        thresholds = { position = 8.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(input)))
+end)()
+t.eq(text_result.objects[1].status, "matched", "ocr: text-only object matches OCR label")
+t.eq(text_result.matched, 1, "ocr: matched count")
+
+-- Nearby OCR must not mark a YOLO slot as mismatched.
+local ocr_neighbor = (function()
+    local input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000ch",
+                yolo_classes = { "chip" },
+                boundary = { x = 0.0, y = 0.0, width = 10.0, height = 10.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000t2",
+                yolo_classes = {},
+                ocr_values = { "TEXT" },
+                boundary = { x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+        },
+        registered_detections = {
+            { label = "TEXT", confidence = 0.9, x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+        },
+        thresholds = { position = 8.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(input)))
+end)()
+local chip = find_object(ocr_neighbor.objects, "8e7f6b3a-0000-4000-8000-0000000000ch")
+local text = find_object(ocr_neighbor.objects, "8e7f6b3a-0000-4000-8000-0000000000t2")
+t.eq(chip.status, "missing", "ocr: YOLO object stays missing, not mismatched by text")
+t.eq(text.status, "matched", "ocr: text object claims the OCR box")
+
 if not t.summary("validation") then
     os.exit(1)
 end
