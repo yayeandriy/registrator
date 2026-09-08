@@ -37,6 +37,11 @@
 --   - Unclaimed YOLO boxes, only if at least one YOLO check ran.
 --   - Unused OCR is never EXTRA (hosts filter to expected needles; noise
 --     must not flood Matched/Mistakes).
+--   - `loose_match == true` (copied from the linked **component**):
+--     leftover YOLO boxes of that component's classes are not extras
+--     once at least as many presence instances are matched as are
+--     placed. Surplus occurrences do not fail the component.
+--     Spatial validation ignores this flag.
 --
 -- Toggleable module — catalog-anchored extras (`opts.anchor_extras`):
 --   Off by default; zero behavior change for any existing caller. When a
@@ -134,14 +139,31 @@ local function yolo_classes_for(o)
     return {}
 end
 
+local function first_component_id(o)
+    if type(o.component_ids) == "table" and o.component_ids[1] then
+        return o.component_ids[1]
+    end
+    return o.id
+end
+
+-- Class labels in the catalog and on the detector can differ by case or
+-- space-vs-underscore (`a_1 lower` vs `a_1_lower`). Loose-match extras
+-- must treat those as the same class.
+local function class_key(s)
+    return trim(tostring(s or "")):lower():gsub("%s+", "_")
+end
+
 local function flatten(objects, out)
     for _, o in ipairs(objects or {}) do
         table.insert(out, {
             id = o.id,
+            name = o.name,
+            component_id = first_component_id(o),
             yolo_classes = yolo_classes_for(o),
             ocr_values = ocr_values_for(o),
             presence = o.presence == true,
             is_anchor = o.is_anchor == true,
+            loose_match = o.loose_match == true,
             vision_model_id = o.vision_model_id,
         })
         if o.children then
@@ -1035,6 +1057,64 @@ local function presence_validator(input)
     -- EXTRA is YOLO-only. Unused OCR strings have no product value as
     -- extras (hosts filter OCR to expected needles; noise must not flood
     -- Matched/Mistakes). `expect_ocr` still gates whether OCR checks ran.
+    -- Loose-match is a component flag: once matched YOLO instances for
+    -- that component reach the placed count, leftover same-class boxes
+    -- are not extras.
+    local yolo_matched = {}
+    for _, row in ipairs(objects) do
+        if row.status == "matched" and row.match_kind == "yolo" then
+            yolo_matched[row.id] = true
+        end
+    end
+    local expected_n, matched_n, loose_comp, classes_of, names_of = {}, {}, {}, {}, {}
+    for _, o in ipairs(expected_flat) do
+        local has_yolo = #(o.yolo_classes or {}) > 0
+        if o.presence and has_yolo then
+            local cid = o.component_id or o.id
+            expected_n[cid] = (expected_n[cid] or 0) + 1
+            if yolo_matched[o.id] then
+                matched_n[cid] = (matched_n[cid] or 0) + 1
+            end
+            if o.loose_match then
+                loose_comp[cid] = true
+            end
+            classes_of[cid] = classes_of[cid] or {}
+            for _, class in ipairs(o.yolo_classes or {}) do
+                classes_of[cid][class_key(class)] = true
+            end
+            if type(o.name) == "string" and trim(o.name) ~= "" then
+                names_of[cid] = names_of[cid] or {}
+                names_of[cid][trim(o.name):lower()] = true
+            end
+        end
+    end
+    local loose_skip = {}
+    local loose_names = {}
+    for cid, _ in pairs(loose_comp) do
+        if (matched_n[cid] or 0) >= (expected_n[cid] or 0) then
+            for class, _ in pairs(classes_of[cid] or {}) do
+                loose_skip[class] = true
+            end
+            for name, _ in pairs(names_of[cid] or {}) do
+                loose_names[name] = true
+            end
+        end
+    end
+
+    local function keep_as_extra(d)
+        if is_ocr_detection(d) or claimed[d._idx] then
+            return false
+        end
+        if loose_skip[class_key(d.label)] then
+            return false
+        end
+        local named = d.matched_label or d.label
+        if type(named) == "string" and loose_names[trim(named):lower()] then
+            return false
+        end
+        return true
+    end
+
     local catalog = input.catalog or {}
     local opts = input.opts or {}
     local anchor_extras = opts.anchor_extras == true and #catalog > 0
@@ -1045,14 +1125,14 @@ local function presence_validator(input)
         -- component may not share any class with the active profile at all.
         local unclaimed = {}
         for _, d in ipairs(detections) do
-            if not is_ocr_detection(d) and not claimed[d._idx] then
+            if keep_as_extra(d) then
                 table.insert(unclaimed, d)
             end
         end
         extra_detections = build_catalog_extras(unclaimed, catalog, ocr_detections)
     elseif expect_yolo then
         for _, d in ipairs(detections) do
-            if not is_ocr_detection(d) and not claimed[d._idx] then
+            if keep_as_extra(d) then
                 local copy = copy_detection(d)
                 if not copy.kind or copy.kind == "" then
                     copy.kind = "yolo"
@@ -1061,6 +1141,18 @@ local function presence_validator(input)
             end
         end
     end
+    -- Catalog-anchored rows use the component name as `label`. Drop those
+    -- too when that component's loose quota is already met.
+    local kept = {}
+    for _, d in ipairs(extra_detections) do
+        if not loose_skip[class_key(d.label)] then
+            local named = d.matched_label or d.label
+            if not (type(named) == "string" and loose_names[trim(named):lower()]) then
+                table.insert(kept, d)
+            end
+        end
+    end
+    extra_detections = kept
     -- Note: `expect_ocr` may be true; unused OCR detections are intentionally
     -- omitted from EXTRA (YOLO-only extras).
 

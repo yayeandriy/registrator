@@ -331,6 +331,36 @@ t.eq(
     "catalog: name survives an ambiguous OCR tick"
 )
 
+-- Same-class leftover can rotate which box is extra (3 detections / 2
+-- expected). Do not latch both leftovers.
+local leftover_a = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "block") },
+        extra_detections = { extra("block", 0.70, 0.20) },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 1,
+    },
+    latched = {},
+    latched_extras = {},
+})
+t.eq(leftover_a.result.extra, 1, "rotate: first leftover")
+local leftover_b = run({
+    result = {
+        objects = { obj(ID, "yolo", "matched", "block") },
+        extra_detections = { extra("block", 0.10, 0.10) },
+        score = 1.0,
+        matched = 1,
+        total = 1,
+        extra = 1,
+    },
+    latched = leftover_a.latched,
+    latched_extras = leftover_a.latched_extras,
+})
+t.eq(leftover_b.result.extra, 1, "rotate: still one extra, not both leftovers")
+t.close(leftover_b.result.extra_detections[1].x, 0.10, 1e-9, "rotate: current leftover wins")
+
 if not t.summary("presence_latch") then
     os.exit(1)
 end

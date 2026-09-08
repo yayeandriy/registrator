@@ -7,7 +7,10 @@
 --      keep it matched even if later frames miss it
 --   2. once a YOLO extra has been seen, keep it listed even if later
 --      accumulator batches drop it for a few ticks (so EXTRA cannot flicker
---      away and spuriously PASS)
+--      away and spuriously PASS). If this tick already lists extras of that
+--      class, unmatched priors are dropped — assignment can rotate which of
+--      N same-class boxes is leftover (3 detections / 2 expected must stay
+--      1 extra, not latch both leftovers).
 --   3. once a catalog-anchored extra (`kind == "extra"`, see
 --      `presence_validator.lua`'s `anchor_extras` toggle) is named, keep
 --      that name for the same physical box (IoU) even on a tick whose OCR
@@ -102,6 +105,16 @@ local MAX_MISSES = 3
 -- between an OCR-confirmed name and the ambiguous fallback tick to tick.
 -- Plain YOLO extras still require the same class label (position alone
 -- is not enough to tell two adjacent same-class boxes apart).
+-- Group extras so assignment rotation of the leftover box does not
+-- accumulate ghosts. Catalog-anchored rows share one group.
+local function extra_group(d)
+    local k = tostring(d.kind or "yolo")
+    if k == "extra" then
+        return "extra"
+    end
+    return "yolo:" .. tostring(d.label or "")
+end
+
 local function extra_kind_matches(a, b)
     local ak = tostring(a.kind or "yolo")
     local bk = tostring(b.kind or "yolo")
@@ -201,6 +214,11 @@ local function merge_extras(prior, current)
         end
     end
     local curr_list = cluster_frame(current)
+    local curr_by_group = {}
+    for _, c in ipairs(curr_list) do
+        local g = extra_group(c)
+        curr_by_group[g] = (curr_by_group[g] or 0) + 1
+    end
     local used_curr = {}
     local out = {}
 
@@ -240,9 +258,13 @@ local function merge_extras(prior, current)
                 matched_label = keep_matched,
             }, 0)
         else
-            local misses = (tonumber(p.misses) or 0) + 1
-            if misses <= MAX_MISSES then
-                out[#out + 1] = shallow_copy_extra(p, misses)
+            -- Current tick already reports this class — prior leftover was
+            -- likely claimed as a match. Holding it double-counts surplus.
+            if (curr_by_group[extra_group(p)] or 0) == 0 then
+                local misses = (tonumber(p.misses) or 0) + 1
+                if misses <= MAX_MISSES then
+                    out[#out + 1] = shallow_copy_extra(p, misses)
+                end
             end
         end
     end
