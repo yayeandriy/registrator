@@ -10,8 +10,12 @@
 --
 -- Input (a single Lua table, passed as this chunk's first argument):
 --   {
---     detections = { { t = 0.0, detections = { { label, confidence, x, y, width, height, corners }, ... } }, ... },
---     expected   = { { yolo_classes, boundary = { x, y, width, height }, rotation, is_anchor, children = {...} }, ... },
+--     detections    = { { t = 0.0, detections = { { label, confidence, x, y, width, height, corners }, ... } }, ... },
+--     expected      = { { yolo_classes, boundary = { x, y, width, height }, rotation, is_anchor, children = {...} }, ... },
+--     frame_aspect  = height / width of the camera buffer (optional, default 1).
+--                     Boxes stay `[0,1]` of the full frame; Y is scaled into
+--                     width-normalized units before the fit so a portrait
+--                     (or landscape) JPEG matches a square board layout.
 --   }
 -- `detections` is (usually) a single recorded frame — the caller is
 -- expected to find the anchor(s) fresh per frame (a moving camera means a
@@ -174,16 +178,32 @@ local function expected_corners(o)
     return { { x1, y1 }, { x2, y2 }, { x3, y3 }, { x4, y4 } }
 end
 
+-- Visual AABB aspect of an expected box after its own `rotation`. A tall
+-- local box stored at ~90° (mask-fit canonicalize) must compare as wide,
+-- matching the live detection AABB — not the unrotated local `w/h`.
+local function visual_aspect(o)
+    local corners = expected_corners(o)
+    local min_x, min_y = math.huge, math.huge
+    local max_x, max_y = -math.huge, -math.huge
+    for _, p in ipairs(corners) do
+        min_x = math.min(min_x, p[1])
+        min_y = math.min(min_y, p[2])
+        max_x = math.max(max_x, p[1])
+        max_y = math.max(max_y, p[2])
+    end
+    return (max_x - min_x) / math.max(max_y - min_y, 1e-6)
+end
+
 -- Matches each anchor reference object to the detection sharing its class
 -- — the "for now, each anchor has a unique class for this preset" rule
 -- (see the "Registration" TODO) makes this a first-match-wins lookup, not
 -- a real assignment problem.
 local function aspect_cost(detected, expected)
-    -- Axis-aligned detection box vs local expected box. A ~58° block's AABB
-    -- is nearly square; the upright anchor stays tall — enough to tell them
-    -- apart when both share the "block" class.
+    -- Detection AABB vs the expected box's *visual* AABB (after rotation).
+    -- A ~58° block's AABB is nearly square; the upright twin stays tall —
+    -- enough to tell them apart when both share the same class.
     local da = (detected.width or 0.0) / math.max(detected.height or 1e-6, 1e-6)
-    local ea = (expected.width or 0.0) / math.max(expected.height or 1e-6, 1e-6)
+    local ea = visual_aspect(expected)
     return math.abs(math.log(math.max(da, 1e-6)) - math.log(math.max(ea, 1e-6)))
 end
 
@@ -251,7 +271,7 @@ local function pick_detection_for_expected(o, expected_flat, detections)
         return ax < bx
     end)
 
-    -- Aspect is the primary signal; Y-rank breaks near-ties.
+    -- Visual aspect is the primary signal; Y-rank breaks near-ties.
     local best, best_score = nil, math.huge
     for i, d in ipairs(candidates) do
         local cost = aspect_cost(d, o)
@@ -739,9 +759,77 @@ local function register_all_detections(hinv, frames)
     return out
 end
 
+-- Width-normalize a full-frame `[0,1]` box: `y' = y * (H/W)`. Square
+-- frames (`aspect ≈ 1`) are unchanged. Presence stays on the raw boxes;
+-- only this script sees the isotropic copy.
+local function isotropize_point(p, aspect)
+    if type(p) ~= "table" then
+        return p
+    end
+    if p.x ~= nil then
+        return { x = p.x, y = (p.y or 0.0) * aspect }
+    end
+    return { p[1], (p[2] or 0.0) * aspect }
+end
+
+local function isotropize_detection(d, aspect)
+    local out = {}
+    for k, v in pairs(d) do
+        out[k] = v
+    end
+    out.y = (d.y or 0.0) * aspect
+    out.height = (d.height or 0.0) * aspect
+    if type(d.corners) == "table" then
+        local corners = {}
+        for i, p in ipairs(d.corners) do
+            corners[i] = isotropize_point(p, aspect)
+        end
+        out.corners = corners
+    end
+    return out
+end
+
+local function isotropize_frames(frames, aspect)
+    if math.abs((aspect or 1.0) - 1.0) < 1e-3 then
+        return frames
+    end
+    local out = {}
+    for i, frame in ipairs(frames) do
+        local dets = {}
+        for j, d in ipairs(frame.detections or {}) do
+            dets[j] = isotropize_detection(d, aspect)
+        end
+        out[i] = { t = frame.t, detections = dets }
+    end
+    return out
+end
+
+-- Fit is in isotropic frame units. Consumers (HUD projection) expect
+-- camera `[0,1]`, so divide the Y row by `aspect` after the inverse
+-- has already registered detections from the isotropic copy.
+local function camera_transform(t, aspect)
+    if math.abs((aspect or 1.0) - 1.0) < 1e-3 then
+        return t
+    end
+    return {
+        tx = t.tx,
+        ty = t.ty / aspect,
+        a = t.a,
+        b = t.b,
+        c = t.c / aspect,
+        d = t.d / aspect,
+        px = t.px,
+        py = t.py,
+    }
+end
+
 local function registration(input)
     local expected_flat = flatten(input.expected or {}, 0.0, 0.0, {})
-    local frames = input.detections or {}
+    local aspect = tonumber(input.frame_aspect) or 1.0
+    if aspect < 1e-6 then
+        aspect = 1.0
+    end
+    local frames = isotropize_frames(input.detections or {}, aspect)
     local matches = match_anchors(expected_flat, frames)
 
     if #matches == 0 then
@@ -771,7 +859,7 @@ local function registration(input)
     local hinv = invert_3x3(transform_matrix(transform))
     if not hinv then
         return {
-            transform = transform,
+            transform = camera_transform(transform, aspect),
             registered_detections = {},
             score = 0.0,
             matched_anchors = #matches,
@@ -780,7 +868,7 @@ local function registration(input)
     end
 
     return {
-        transform = transform,
+        transform = camera_transform(transform, aspect),
         registered_detections = register_all_detections(hinv, frames),
         score = score_for(#matches),
         matched_anchors = #matches,

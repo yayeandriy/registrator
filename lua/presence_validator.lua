@@ -37,11 +37,12 @@
 --   - Unclaimed YOLO boxes, only if at least one YOLO check ran.
 --   - Unused OCR is never EXTRA (hosts filter to expected needles; noise
 --     must not flood Matched/Mistakes).
---   - `loose_match == true` (copied from the linked **component**):
---     leftover YOLO boxes of that component's classes are not extras
+--   - `loose_match == true` (on the **profile object**):
+--     leftover YOLO boxes of that object's classes are not extras
 --     once at least as many presence instances are matched as are
---     placed. Surplus occurrences do not fail the component.
---     Spatial validation ignores this flag.
+--     placed. Surplus occurrences do not fail the object.
+--     The same catalog component may be loose in one profile and
+--     strict in another. Spatial validation ignores this flag.
 --
 -- Toggleable module — catalog-anchored extras (`opts.anchor_extras`):
 --   Off by default; zero behavior change for any existing caller. When a
