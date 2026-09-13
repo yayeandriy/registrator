@@ -9,6 +9,8 @@ local suites = {
     "test_matcher.lua",
     "test_registration.lua",
     "test_validation.lua",
+    "test_ruller.lua",
+    "test_layout.lua",
     "test_accumulator.lua",
     "test_presence_validator.lua",
     "test_presence_latch.lua",

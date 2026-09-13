@@ -359,6 +359,10 @@ local function validate_same_class(o, detections, thresholds, claimed)
         matched_confidence = detected.confidence,
         delta_position = delta_position,
         delta_rotation = delta_rotation,
+        matched_x = detected.x,
+        matched_y = detected.y,
+        matched_width = detected.width,
+        matched_height = detected.height,
     }, detected._idx
 end
 
@@ -374,6 +378,10 @@ local function mismatched_or_missing(o, detections, thresholds, claimed, expecte
             matched_label = wrong_class.label,
             matched_confidence = wrong_class.confidence,
             delta_position = wrong_dist,
+            matched_x = wrong_class.x,
+            matched_y = wrong_class.y,
+            matched_width = wrong_class.width,
+            matched_height = wrong_class.height,
         }, wrong_class._idx
     end
     return {

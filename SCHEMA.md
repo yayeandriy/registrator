@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -86,7 +86,7 @@ Quads (`Detection.corners`, `expected_corners`) are always 4 of these, ordered c
 ```json
 {
   "objects": [
-    { "id": "<uuid>", "yolo_class": "connector", "is_anchor": true, "status": "matched", "matched_label": "connector", "matched_confidence": 0.9, "delta_position": 0.3, "delta_rotation": 2.0 }
+    { "id": "<uuid>", "yolo_class": "connector", "is_anchor": true, "status": "matched", "matched_label": "connector", "matched_confidence": 0.9, "delta_position": 0.3, "delta_rotation": 2.0, "matched_x": 0.0, "matched_y": 0.0, "matched_width": 10.0, "matched_height": 10.0 }
   ],
   "extra_detections": [ /* same shape as a registered detection */ ],
   "score": 1.0,
@@ -96,7 +96,54 @@ Quads (`Detection.corners`, `expected_corners`) are always 4 of these, ordered c
 }
 ```
 
-`status` is one of `"matched"`, `"missing"`, `"mismatched"`, `"mispositioned"`, `"misrotated"`, `"mispositioned_misrotated"`. `matched_label`/`matched_confidence`/`delta_position` are `null` only when `status == "missing"`; `delta_rotation` is additionally `null` when `status == "mismatched"`, or when neither side has an orientation to compare.
+`status` is one of `"matched"`, `"missing"`, `"mismatched"`, `"mispositioned"`, `"misrotated"`, `"mispositioned_misrotated"`. `matched_label`/`matched_confidence`/`delta_position` are `null` only when `status == "missing"`; `delta_rotation` is additionally `null` when `status == "mismatched"`, or when neither side has an orientation to compare. Claimed rows also carry `matched_x` / `matched_y` / `matched_width` / `matched_height` (board space) so later steps and overlays bind the assigned box, not the expected slot.
+
+## `layout.lua`
+
+Global min-cost assignment of detections to expected objects. Independent of `validation.lua`'s greedy flatten-order claim. Same output shape as `validation.lua`. When `enabled` is `false`, returns `validation` unchanged so the host can leave the step in the chain.
+
+**Input:**
+
+```json
+{
+  "expected": [ /* ReferenceObject[] */ ],
+  "registered_detections": [ /* same as validation */ ],
+  "validation": { /* output of validation.lua */ },
+  "thresholds": { "position": 8.0, "rotation": 30.0 },
+  "enabled": true
+}
+```
+
+`enabled` omitted → on. Cost is center distance when the detection label matches the object; otherwise unused. Then the same mismatched / missing pass as `validation.lua`.
+
+**Output:** same shape as `validation.lua` (including `matched_*` on claimed rows).
+
+Spatial pipeline: `validation.lua` → `layout.lua` → `ruller.lua`.
+
+## `ruller.lua`
+
+Applies per-object Spatial pose thresholds after `validation.lua` / `layout.lua`. Matching / extras / mismatched-vs-missing are unchanged. Measures the box named by `matched_*` when present.
+
+**Input:**
+
+```json
+{
+  "expected": [ /* ReferenceObject[] — optional thresholds: { x, y, distance, rotation } */ ],
+  "registered_detections": [ /* same as validation */ ],
+  "validation": { /* output of validation.lua */ },
+  "thresholds": { "position": 8.0, "rotation": 30.0 }
+}
+```
+
+`expected[].thresholds` pick **one** position approach per object:
+
+- **axis** — `x` and/or `y` set (fractions of the detected box, along the object axis). `distance` is ignored.
+- **distance** — only `distance` set (fraction of the detected diagonal).
+- **else** — global absolute `thresholds.position`.
+
+`rotation` is degrees and is independent: per-object when set, otherwise global `thresholds.rotation`. Applied only when `expected[].symmetry` is `60` / `90` / `120` / `180`. `inf` and `0` leave the `validation.lua` rotation classification unchanged.
+
+**Output:** same shape as `validation.lua`.
 
 ## `presence_validator.lua`
 
