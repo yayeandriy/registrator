@@ -746,6 +746,9 @@ local function register_detection(hinv, d)
         width = max_x - min_x,
         height = max_y - min_y,
         rotation = rotation,
+        -- Presence/Spatial extras treat OCR separately from YOLO. Keep
+        -- the producer kind so a Presence-only paper is not a Spatial extra.
+        kind = d.kind,
     }
 end
 

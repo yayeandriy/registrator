@@ -13,10 +13,9 @@
 --   - non-empty `ocr_values` (text-only parts may seed OCR with Presence Off)
 --
 -- Matching rules (modalities are independent — never cross-fallback):
---   - OCR: non-empty `ocr_values` → loose search inside OCR detection labels
---     (case-insensitive; whitespace + punctuation stripped; either side may
---     contain the other when the shorter token is ≥3 chars). Digit-only
---     needles (e.g. year "2020") also match when several short OCR fragments
+--   - OCR: non-empty `ocr_values` → `matcher.lua` (expected text inside
+--     any found string after `normalisator.lua`). Digit-only needles
+--     (e.g. year "2020") also match when several short OCR fragments
 --     inside the gate concatenate (left-to-right) to contain the needle —
 --     Vision often splits arched stamp digits. **Every** expected string is
 --     required (AND): one OCR result row per needle.
@@ -89,13 +88,31 @@ local function trim(s)
 end
 
 local function normalize_alnum(s)
+    if type(normalisator) == "function" then
+        local r = normalisator({ value = s })
+        if type(r) == "table" and type(r.value) == "string" then
+            return r.value
+        end
+        return ""
+    end
     if type(s) ~= "string" then
         return ""
     end
-    local t = trim(s):lower()
+    local t = trim(s):upper()
     t = t:gsub("%s+", "")
     t = t:gsub("[^%w]", "")
     return t
+end
+
+-- Presence text match — same script Spatial uses (`matcher.lua`).
+local function text_match(hay, needle)
+    if type(matcher) == "function" then
+        local r = matcher({ hay = hay, needle = needle })
+        return r and r.matched == true
+    end
+    local h = normalize_alnum(hay)
+    local n = normalize_alnum(needle)
+    return h ~= "" and n ~= "" and h:find(n, 1, true) ~= nil
 end
 
 local function non_empty(s)
@@ -197,32 +214,9 @@ local function is_ocr_detection(d)
     return k == "ocr" or k:sub(1, 4) == "ocr:"
 end
 
--- True when `needle` is accounted for by `hay` (either direction).
--- Reverse direction requires the detection fragment to be at least 3
--- chars so a short OCR blip cannot satisfy a long expected string.
+-- True when `needle` is accounted for by `hay` (`matcher.lua`).
 local function ocr_text_match(hay, needle)
-    local h = normalize_alnum(hay)
-    local n = normalize_alnum(needle)
-    if h == "" or n == "" then
-        return false
-    end
-    if h:find(n, 1, true) then
-        return true
-    end
-    if #h >= 3 and n:find(h, 1, true) then
-        return true
-    end
-    local hd = h:gsub("%D", "")
-    local nd = n:gsub("%D", "")
-    if hd ~= "" and nd ~= "" then
-        if hd:find(nd, 1, true) then
-            return true
-        end
-        if #hd >= 3 and nd:find(hd, 1, true) then
-            return true
-        end
-    end
-    return false
+    return text_match(hay, needle)
 end
 
 local function find_yolo(detections, class, claimed)
@@ -518,6 +512,68 @@ local function find_ocr_digit_assembly(ocr_detections, needle, region, claimed_o
     return hit, claim_idxs
 end
 
+-- Letter (or mixed) fragments: `matcher.lua` concat of in-gate OCR
+-- left-to-right — "A"+"B"+"C" → expected "Abc".
+local function find_ocr_text_assembly(ocr_detections, needle, region, claimed_ocr)
+    if type(matcher) ~= "function" then
+        return nil, nil
+    end
+    if normalize_alnum(needle) == "" then
+        return nil, nil
+    end
+    local parts = {}
+    for _, d in ipairs(ocr_detections) do
+        if not (claimed_ocr and claimed_ocr[d._idx]) and center_inside_aabb(region, d) then
+            local cx, cy = detection_center(d)
+            table.insert(parts, { d = d, x = cx, y = cy })
+        end
+    end
+    if #parts == 0 then
+        return nil, nil
+    end
+    table.sort(parts, function(a, b)
+        if a.x ~= b.x then
+            return a.x < b.x
+        end
+        return a.y < b.y
+    end)
+    local labels = {}
+    for i, p in ipairs(parts) do
+        labels[i] = p.d.label
+    end
+    local r = matcher({ found = labels, expected = needle })
+    if not (r and r.matched) then
+        return nil, nil
+    end
+    local from = r.from or r.index or 1
+    local to = r.to or r.index or from
+    local claim_idxs = {}
+    local hit = nil
+    for i = from, to do
+        local p = parts[i]
+        if p then
+            table.insert(claim_idxs, p.d._idx)
+            if not hit then
+                hit = p.d
+            end
+        end
+    end
+    if not hit then
+        return nil, nil
+    end
+    hit = {
+        _idx = hit._idx,
+        label = needle,
+        confidence = hit.confidence,
+        x = hit.x,
+        y = hit.y,
+        width = hit.width,
+        height = hit.height,
+        kind = hit.kind,
+    }
+    return hit, claim_idxs
+end
+
 -- Prefer the OCR hit nearest the instance center; honor exclusive claims.
 -- Returns `hit, claim_idxs` (claim_idxs nil → claim hit._idx only).
 local function find_ocr(ocr_detections, needle, region, claimed_ocr, anchor_x, anchor_y)
@@ -547,7 +603,11 @@ local function find_ocr(ocr_detections, needle, region, claimed_ocr, anchor_x, a
     if best then
         return best, { best._idx }
     end
-    return find_ocr_digit_assembly(ocr_detections, needle, region, claimed_ocr)
+    local digits, digit_idxs = find_ocr_digit_assembly(ocr_detections, needle, region, claimed_ocr)
+    if digits then
+        return digits, digit_idxs
+    end
+    return find_ocr_text_assembly(ocr_detections, needle, region, claimed_ocr)
 end
 
 -- How many objects in `group` list this needle (shared vs unique text).

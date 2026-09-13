@@ -2,6 +2,8 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
+normalisator = dofile(script_dir .. "../lua/normalisator.lua")
+matcher = dofile(script_dir .. "../lua/matcher.lua")
 local presence_validator = dofile(script_dir .. "../lua/presence_validator.lua")
 local t = dofile(script_dir .. "asserts.lua")
 
@@ -156,7 +158,8 @@ t.eq(sn.status, "matched", "ocr: whitespace/case-insensitive SN-42")
 local absent = find_object(ocr_result.objects, "bbbbbbbb-0000-4000-8000-000000000003")
 t.eq(absent.status, "missing", "ocr: ABSENT missing")
 
--- Punctuation-stripped + bidirectional: expected full serial, OCR fragment.
+-- Matcher is one-way: expected must appear inside a found string.
+-- A shorter OCR fragment does not satisfy a longer needle.
 local frag = run({
     expected = {
         {
@@ -173,7 +176,7 @@ local frag = run({
         { label = "7206143", confidence = 1.0, x = 0, y = 0, width = 1, height = 1, kind = "ocr" },
     },
 })
-t.eq(frag.matched, 1, "ocr frag: detection fragment satisfies longer expected")
+t.eq(frag.matched, 0, "ocr frag: short found does not satisfy longer expected")
 
 -- One OCR line can satisfy two expected substrings (no exclusive claim).
 local share_result = run({
@@ -1108,6 +1111,28 @@ t.eq(stamp_spaced.matched, 0, "stamp spaced: exact class mismatch so YOLO miss")
 -- Quota not met → do not swallow foreign extras; leftover a_1_* stay extra
 -- because the object itself did not match (classes did not line up).
 t.eq(stamp_spaced.extra > 0, true, "stamp spaced: unmatched loose does not hide leftovers")
+
+-- Split handwritten letters: matcher concat "A"+"B"+"C" → expected "Abc".
+local split_letters = run({
+    expected = {
+        {
+            id = "abababab-0000-4000-8000-0000000000ab",
+            ocr_values = { "Abc" },
+            presence = true,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = false,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "A", confidence = 1.0, x = 0.10, y = 0.40, width = 0.04, height = 0.06, kind = "ocr" },
+        { label = "B", confidence = 1.0, x = 0.16, y = 0.40, width = 0.04, height = 0.06, kind = "ocr" },
+        { label = "C", confidence = 1.0, x = 0.22, y = 0.40, width = 0.04, height = 0.06, kind = "ocr" },
+    },
+})
+t.eq(split_letters.matched, 1, "split letters: Abc assembled")
+t.eq(split_letters.objects[1].status, "matched", "split letters: status")
 
 if not t.summary("presence_validator") then
     os.exit(1)

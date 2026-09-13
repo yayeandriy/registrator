@@ -5,6 +5,8 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
+normalisator = dofile(script_dir .. "../lua/normalisator.lua")
+matcher = dofile(script_dir .. "../lua/matcher.lua")
 local validation = dofile(script_dir .. "../lua/validation.lua")
 local t = dofile(script_dir .. "asserts.lua")
 
@@ -110,14 +112,14 @@ t.eq(c3.status, "matched", "neighbor: first capacitor matched")
 t.eq(c4.status, "missing", "neighbor: empty slot is missing, not mismatched")
 t.eq(neighbor_result.extra, 0, "neighbor: sole detection claimed by match")
 
--- Text-only Spatial placement: overlay OCR "TEXT" satisfies expected "TEXT A".
+-- Text-only Spatial: expected needle must appear inside the found string.
 local text_result = (function()
     local input = {
         expected = {
             {
                 id = "8e7f6b3a-0000-4000-8000-0000000000tx",
                 yolo_classes = {},
-                ocr_values = { "TEXT A" },
+                ocr_values = { "TEXT" },
                 boundary = { x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
                 rotation = 0.0,
                 is_anchor = false,
@@ -125,7 +127,7 @@ local text_result = (function()
             },
         },
         registered_detections = {
-            { label = "TEXT", confidence = 0.9, x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+            { label = "TEXT A", confidence = 0.9, x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
         },
         thresholds = { position = 8.0, rotation = 30.0 },
     }
@@ -167,6 +169,31 @@ local chip = find_object(ocr_neighbor.objects, "8e7f6b3a-0000-4000-8000-00000000
 local text = find_object(ocr_neighbor.objects, "8e7f6b3a-0000-4000-8000-0000000000t2")
 t.eq(chip.status, "missing", "ocr: YOLO object stays missing, not mismatched by text")
 t.eq(text.status, "matched", "ocr: text object claims the OCR box")
+
+-- Presence-only paper is not a Spatial leftover: unused OCR is never extra.
+local presence_ocr = (function()
+    local input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000bl",
+                yolo_classes = { "blocklock" },
+                boundary = { x = 0.0, y = 0.0, width = 10.0, height = 10.0 },
+                rotation = 0.0,
+                is_anchor = true,
+                children = {},
+            },
+        },
+        registered_detections = {
+            { label = "blocklock", confidence = 0.9, x = 0.0, y = 0.0, width = 10.0, height = 10.0, kind = "yolo" },
+            { label = "ABC", confidence = 1.0, x = 40.0, y = 40.0, width = 4.0, height = 2.0, kind = "ocr" },
+        },
+        thresholds = { position = 8.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(input)))
+end)()
+t.eq(presence_ocr.objects[1].status, "matched", "presence-ocr: YOLO matched")
+t.eq(presence_ocr.extra, 0, "presence-ocr: unused OCR is never Spatial extra")
+t.eq(#presence_ocr.extra_detections, 0, "presence-ocr: no extra detections")
 
 if not t.summary("validation") then
     os.exit(1)

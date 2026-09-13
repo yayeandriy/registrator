@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -65,6 +65,7 @@ Quads (`Detection.corners`, `expected_corners`) are always 4 of these, ordered c
 
 - `transform` is `null` when `error` is set (e.g. no anchor detected at all).
 - `registered_detections[].rotation` is only non-`null` when the *original* detection carried a real `corners` quad.
+- `registered_detections[].kind` is copied through from the raw detection (`yolo` / `ocr` / `ocr:…`). Spatial extras skip unused OCR, same as Presence.
 
 ## `validation.lua`
 
@@ -255,3 +256,19 @@ Host stores `latched` + `latched_extras` between ticks and feeds them back. Spat
 ```
 
 `rotation`/`corners` are only present on an output detection when at least one of its cluster's own frame-appearances carried one.
+
+## `normalisator.lua`
+
+Frame-only OCR rewrite (no expected needles). **Always English:** output is ASCII `A–Z` / `0–9` only (Cyrillic/Greek/fullwidth folded). Hosts run this when the profile has any component text values, on every OCR detection.
+
+**Input** (first matching shape): `{ "value": "a b c" }` / `{ "values": ["a b c"] }` / `{ "detections": [ { "label", "kind", ... } ] }` / `{ "frames": [ { "t", "detections" } ] }`
+
+**Output** mirrors the input. `kind` starting `ocr` has `label` uppercased with whitespace and punctuation removed (`A B C` → `ABC`, `P-06` → `P06`). YOLO labels are unchanged.
+
+## `matcher.lua`
+
+Presence / Spatial text match — not registration. Expected text is matched when it appears inside any found string (or the LTR concatenation of `found`) after `normalisator.lua`.
+
+**Input:** `{ "hay": "…", "needle": "…" }` or `{ "found": ["A","B","C"], "expected": "Abc" }`
+
+**Output:** `{ "matched": true, "index": 1, "from": 1, "to": 1 }` or a `from`/`to` span for concat hits.

@@ -35,7 +35,7 @@
 --       },
 --       ...
 --     },
---     extra_detections = { { label, confidence, x, y, width, height, rotation }, ... },
+--     extra_detections = { { label, confidence, x, y, width, height, rotation, kind }, ... },
 --     score = 0.0..1.0,  -- fraction of `objects` with status == "matched"
 --     matched = <n>,
 --     total = <n>,
@@ -50,7 +50,8 @@
 -- that never explained *any* expected object (not even a `mismatched`
 -- one) — a real thing on the board the layout didn't ask for, or a
 -- spurious false positive; either way, not something any `objects`
--- entry already accounts for.
+-- entry already accounts for. Unused OCR (`kind` starting `ocr`) is
+-- never listed as extra — same rule as `presence_validator.lua`.
 
 -- Deliberately generous — a single-anchor registration (the common case
 -- today: most boards define just the one anchor) only pins position and
@@ -82,39 +83,39 @@ local function non_empty(s)
 end
 
 local function normalize_alnum(s)
+    if type(normalisator) == "function" then
+        local r = normalisator({ value = s })
+        if type(r) == "table" and type(r.value) == "string" then
+            return r.value
+        end
+        return ""
+    end
     if type(s) ~= "string" then
         return ""
     end
-    local t = trim(s):lower()
+    local t = trim(s):upper()
     t = t:gsub("%s+", "")
     t = t:gsub("[^%w]", "")
     return t
 end
 
--- Same loose OCR match as `presence_validator.lua` (`ocr_text_match`).
-local function ocr_text_match(hay, needle)
-    local h = normalize_alnum(hay)
-    local n = normalize_alnum(needle)
-    if h == "" or n == "" then
+-- Spatial text match — same `matcher.lua` Presence uses (expected inside found).
+local function is_ocr_kind(kind)
+    if type(kind) ~= "string" then
         return false
     end
-    if h:find(n, 1, true) then
-        return true
+    kind = kind:lower()
+    return kind == "ocr" or kind:sub(1, 4) == "ocr:"
+end
+
+local function ocr_text_match(hay, needle)
+    if type(matcher) == "function" then
+        local r = matcher({ hay = hay, needle = needle })
+        return r and r.matched == true
     end
-    if #h >= 3 and n:find(h, 1, true) then
-        return true
-    end
-    local hd = h:gsub("%D", "")
-    local nd = n:gsub("%D", "")
-    if hd ~= "" and nd ~= "" then
-        if hd:find(nd, 1, true) then
-            return true
-        end
-        if #hd >= 3 and nd:find(hd, 1, true) then
-            return true
-        end
-    end
-    return false
+    local h = normalize_alnum(hay)
+    local n = normalize_alnum(needle)
+    return h ~= "" and n ~= "" and h:find(n, 1, true) ~= nil
 end
 
 local function yolo_classes_for(o)
@@ -297,6 +298,7 @@ local function nearest_any_match(o, detections, claimed, expected_flat)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
         if not claimed[d._idx]
+            and not is_ocr_kind(d.kind)
             and not (skip_ocr and label_is_expected_ocr(d.label, expected_flat))
         then
             local dx, dy = center(d)
@@ -452,7 +454,7 @@ local function validation(input)
 
     local extra_detections = {}
     for _, d in ipairs(detections) do
-        if not claimed[d._idx] then
+        if not claimed[d._idx] and not is_ocr_kind(d.kind) then
             table.insert(extra_detections, {
                 label = d.label,
                 confidence = d.confidence,
@@ -461,6 +463,7 @@ local function validation(input)
                 width = d.width,
                 height = d.height,
                 rotation = d.rotation,
+                kind = d.kind,
             })
         end
     end

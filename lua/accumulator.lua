@@ -136,6 +136,7 @@ local function new_cluster(d)
     local w = sample_weight(d)
     local c = {
         label = d.label,
+        kind = d.kind,
         box = { x = d.x, y = d.y, width = d.width, height = d.height },
         box_weight = w,
         confidence_sum = d.confidence,
@@ -221,7 +222,7 @@ local function match_frame(clusters, detections, iou_threshold)
     local candidates = {}
     for di, d in ipairs(detections) do
         for ci, c in ipairs(clusters) do
-            if c.label == d.label then
+            if c.label == d.label and (c.kind or "yolo") == (d.kind or "yolo") then
                 local iou = box_iou(c.box, d)
                 if iou >= iou_threshold then
                     table.insert(candidates, { di = di, ci = ci, iou = iou })
@@ -258,6 +259,7 @@ local function finalize_cluster(c, total_frames)
     local presence = c.n
     local out = {
         label = c.label,
+        kind = c.kind,
         confidence = c.confidence_sum / c.n,
         x = c.box.x,
         y = c.box.y,

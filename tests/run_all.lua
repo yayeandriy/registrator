@@ -5,6 +5,8 @@
 
 local script_dir = (arg[0]):match("(.*/)") or "./"
 local suites = {
+    "test_normalisator.lua",
+    "test_matcher.lua",
     "test_registration.lua",
     "test_validation.lua",
     "test_accumulator.lua",
