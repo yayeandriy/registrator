@@ -57,7 +57,7 @@ t.eq(ruled.objects[1].status, raw.objects[1].status, "unset: same as validation"
 t.eq(ruled.matched, raw.matched, "unset: matched count")
 
 ruled, raw = run(
-    { expected_obj("a", "connector", 0.0, 0.0, 10.0, 10.0, { distance = 0.05 }) },
+    { expected_obj("a", "connector", 0.0, 0.0, 10.0, 10.0, { distance = 0.5 }) },
     { det("connector", 2.0, 0.0, 10.0, 10.0, nil) },
     nil
 )
@@ -85,17 +85,6 @@ ruled, raw = run(
     { position = 8.0, rotation = 30.0 }
 )
 t.eq(ruled.objects[1].status, raw.objects[1].status, "full symmetry: ruller leaves rotation")
-
-ruled, raw = run(
-    { expected_obj("a", "connector", 0.0, 0.0, 10.0, 10.0, {
-        x = 1.0,
-        y = 1.0,
-        distance = 0.01,
-    }) },
-    { det("connector", 2.0, 0.0, 10.0, 10.0, nil) },
-    nil
-)
-t.eq(ruled.objects[1].status, "matched", "axis set: leftover distance ignored")
 
 ruled, raw = run(
     { expected_obj("a", "connector", 0.0, 0.0, 10.0, 10.0, nil) },
@@ -141,6 +130,54 @@ ruled = ruller({
 })
 t.eq(ruled.objects[1].status, "mispositioned", "ruller uses assigned far box")
 t.eq(ruled.objects[1].matched_x, 70.0, "ruller keeps assigned coords")
+
+-- Slider 39.2 on a 28×28 expected pin; live box is smaller and 26.5 away.
+ruled, raw = run(
+    { expected_obj("p", "pin-side", 0.0, 0.0, 28.0, 28.0, { distance = 39.2 }) },
+    { det("pin-side", 36.5, 10.0, 8.0, 8.0, nil) },
+    nil
+)
+t.eq(raw.objects[1].status, "mispositioned", "small-det: validation still global-fail")
+t.eq(ruled.objects[1].status, "matched", "small-det: ruller uses delta_position")
+
+ruled, raw = run(
+    { expected_obj("p2", "pin-side", 0.0, 0.0, 10.0, 10.0, { distance = 28.3 }) },
+    { det("pin-side", 26.9, 1.0, 8.0, 8.0, nil) },
+    nil
+)
+t.eq(raw.objects[1].status, "mispositioned", "board-unit: validation still global-fail")
+t.eq(ruled.objects[1].status, "matched", "board-unit: 25.9 away passes 28.3")
+
+ruled, raw = run(
+    { expected_obj("p3", "pin-side", 0.0, 0.0, 10.0, 10.0, { distance = 12.5 }) },
+    { det("pin-side", 31.0, 1.0, 8.0, 8.0, nil) },
+    nil
+)
+t.eq(ruled.objects[1].status, "mispositioned", "board-unit: 30 away fails 12.5")
+
+-- Slider 17.5 vs the inspect "away" number — no second measurement.
+-- 10×10 expected at origin (center 5,5); 8×8 dets placed by center delta.
+ruled, raw = run(
+    { expected_obj("p4", "pin-side", 0.0, 0.0, 10.0, 10.0, { distance = 17.5 }) },
+    { det("pin-side", 2.6, 1.0, 8.0, 8.0, nil) },
+    { position = 30.0, rotation = 30.0 }
+)
+t.eq(raw.objects[1].status, "matched", "1.6 away: layout already under global 30")
+t.eq(ruled.objects[1].status, "matched", "1.6 away: passes distance 17.5")
+
+ruled, raw = run(
+    { expected_obj("p5", "pin-side", 0.0, 0.0, 10.0, 10.0, { distance = 17.5 }) },
+    { det("pin-side", 12.1, 1.0, 8.0, 8.0, nil) },
+    { position = 30.0, rotation = 30.0 }
+)
+t.eq(ruled.objects[1].status, "matched", "11.1 away: passes distance 17.5")
+
+ruled, raw = run(
+    { expected_obj("p6", "pin-side", 0.0, 0.0, 10.0, 10.0, { distance = 17.5 }) },
+    { det("pin-side", 64.9, 1.0, 8.0, 8.0, nil) },
+    { position = 30.0, rotation = 30.0 }
+)
+t.eq(ruled.objects[1].status, "mispositioned", "63.9 away: fails distance 17.5")
 
 if not t.summary("ruller") then
     os.exit(1)

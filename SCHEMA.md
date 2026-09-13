@@ -122,24 +122,20 @@ Spatial pipeline: `validation.lua` → `layout.lua` → `ruller.lua`.
 
 ## `ruller.lua`
 
-Applies per-object Spatial pose thresholds after `validation.lua` / `layout.lua`. Matching / extras / mismatched-vs-missing are unchanged. Measures the box named by `matched_*` when present.
+Applies per-object Spatial pose thresholds after `validation.lua` / `layout.lua`. Matching / extras / mismatched-vs-missing are unchanged. Position compares the previous step's `delta_position` (inspect `N away`) to the catalog number — no second measurement.
 
 **Input:**
 
 ```json
 {
-  "expected": [ /* ReferenceObject[] — optional thresholds: { x, y, distance, rotation } */ ],
+  "expected": [ /* ReferenceObject[] — optional thresholds: { distance, rotation } */ ],
   "registered_detections": [ /* same as validation */ ],
   "validation": { /* output of validation.lua */ },
   "thresholds": { "position": 8.0, "rotation": 30.0 }
 }
 ```
 
-`expected[].thresholds` pick **one** position approach per object:
-
-- **axis** — `x` and/or `y` set (fractions of the detected box, along the object axis). `distance` is ignored.
-- **distance** — only `distance` set (fraction of the detected diagonal).
-- **else** — global absolute `thresholds.position`.
+`expected[].thresholds.distance` is absolute board units (same as inspect `N away`). When unset, ruller uses global `thresholds.position` vs `delta_position`.
 
 `rotation` is degrees and is independent: per-object when set, otherwise global `thresholds.rotation`. Applied only when `expected[].symmetry` is `60` / `90` / `120` / `180`. `inf` and `0` leave the `validation.lua` rotation classification unchanged.
 
