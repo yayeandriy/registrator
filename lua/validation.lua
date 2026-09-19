@@ -159,19 +159,31 @@ local function ocr_values_for(o)
     return {}
 end
 
-local function label_in_classes(label, classes)
+local function label_in_classes(detection, classes)
+    if type(class_match) == "table" and type(class_match.in_expected) == "function" then
+        local d = detection
+        if type(detection) ~= "table" then
+            d = { label = detection }
+        end
+        return class_match.in_expected(d, classes)
+    end
+    local label = type(detection) == "table" and detection.label or detection
     for _, class in ipairs(classes) do
-        if label == class then
+        local exp = type(class) == "table" and class.label or class
+        if label == exp then
             return true
         end
     end
     return false
 end
 
-local function label_matches_object(label, o)
-    if label_in_classes(label, o.yolo_classes or {}) then
+local function label_matches_object(detection, o)
+    local classes = (type(class_match) == "table" and class_match.expected_list(o))
+        or (o.yolo_classes or {})
+    if label_in_classes(detection, classes) then
         return true
     end
+    local label = type(detection) == "table" and detection.label or detection
     -- Text-only Spatial placements have no YOLO class — match OCR needles
     -- the same way Presence does (overlay "TEXT" vs expected "TEXT A").
     if #(o.yolo_classes or {}) == 0 then
@@ -204,6 +216,8 @@ local function flatten(objects, origin_x, origin_y, out)
         table.insert(out, {
             id = o.id,
             yolo_classes = yolo_classes_for(o),
+            yolo_class_refs = o.yolo_class_refs,
+            vision_model_id = o.vision_model_id,
             ocr_values = ocr_values_for(o),
             x = x,
             y = y,
@@ -272,7 +286,7 @@ local function nearest_match(o, detections, claimed)
     local ex, ey = center(o)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        if not claimed[d._idx] and label_matches_object(d.label, o) then
+        if not claimed[d._idx] and label_matches_object(d, o) then
             local dx, dy = center(d)
             local dist = distance(ex, ey, dx, dy)
             if dist < best_dist then

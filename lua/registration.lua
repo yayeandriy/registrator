@@ -69,14 +69,13 @@
 --     general *affine* least-squares fit — rotation, independent
 --     per-axis scale, and shear, but still no perspective (`px`/`py`
 --     stay 0).
---   - 4+ *genuine* quad-corner pairs (i.e. real corners reported on at
---     least one matched detection, not synthesized centers — see
---     `collect_corner_pairs` for why centers are excluded here
---     specifically): a full projective homography fit, capable of
---     undoing real perspective/keystone distortion (the camera looking
---     at the board's plane from an angle) that no affine map can
---     represent. This is the richest tier and is preferred whenever
---     enough genuine corners are available.
+--   - 4+ *genuine* quad-corner pairs (see `collect_corner_pairs`): a
+--     full projective homography fit, capable of undoing real
+--     perspective/keystone. One compact (near-square) anchor quad is
+--     enough — that is the usual single-anchor path. A *thin* single
+--     rectangle (aspect ≥ 2, e.g. a long block) can pin 8 DoF
+--     numerically but the map is ill-conditioned away from that quad,
+--     so that case stays on the affine / single-anchor tier.
 -- `registered_detections` is the actual point of registration: every given
 -- detection, run back through the *inverse* of that same transform, so its
 -- position and size are expressed in the expected layout's own board-unit
@@ -113,9 +112,18 @@ local function yolo_classes_for(o)
     return {}
 end
 
-local function label_in_classes(label, classes)
+local function label_in_classes(detection, classes)
+    if type(class_match) == "table" and type(class_match.in_expected) == "function" then
+        local d = detection
+        if type(detection) ~= "table" then
+            d = { label = detection }
+        end
+        return class_match.in_expected(d, classes)
+    end
+    local label = type(detection) == "table" and detection.label or detection
     for _, class in ipairs(classes) do
-        if label == class then
+        local exp = type(class) == "table" and class.label or class
+        if label == exp then
             return true
         end
     end
@@ -131,6 +139,8 @@ local function flatten(objects, origin_x, origin_y, out)
         table.insert(out, {
             id = o.id,
             yolo_classes = yolo_classes_for(o),
+            yolo_class_refs = o.yolo_class_refs,
+            vision_model_id = o.vision_model_id,
             x = x,
             y = y,
             width = o.boundary.width,
@@ -213,10 +223,11 @@ local function pick_detection_for_expected(o, expected_flat, detections)
     -- transform. Prefer the candidate whose AABB aspect matches the expected
     -- local box; tie-break by board/frame Y-rank so the lower board anchor
     -- binds the lower-on-screen detection when the camera faces the board.
-    local classes = o.yolo_classes or {}
+    local classes = (type(class_match) == "table" and class_match.expected_list(o))
+        or (o.yolo_classes or {})
     local candidates = {}
     for _, d in ipairs(detections) do
-        if label_in_classes(d.label, classes) then
+        if label_in_classes(d, classes) then
             table.insert(candidates, d)
         end
     end
@@ -225,13 +236,15 @@ local function pick_detection_for_expected(o, expected_flat, detections)
     end
 
     local function shares_class(other)
-        for _, c in ipairs(other.yolo_classes or {}) do
+        local other_classes = (type(class_match) == "table" and class_match.expected_list(other))
+            or (other.yolo_classes or {})
+        for _, c in ipairs(other_classes) do
             if label_in_classes(c, classes) then
                 return true
             end
         end
         for _, c in ipairs(classes) do
-            if label_in_classes(c, other.yolo_classes or {}) then
+            if label_in_classes(c, other_classes) then
                 return true
             end
         end
@@ -645,8 +658,36 @@ end
 -- — see this file's header comment for the 4 tiers. Falls back to the
 -- next tier down whenever a richer fit turns out degenerate (e.g.
 -- collinear points), rather than failing outright.
+-- Long thin single quads invent a perspective map that explodes away
+-- from the object. Compact (near-square) single anchors are fine.
+local THIN_QUAD_ASPECT = 2.0
+
+local function expected_aspect(expected)
+    local w = tonumber(expected.width) or 0.0
+    local h = tonumber(expected.height) or 0.0
+    local mn = math.min(w, h)
+    if mn < 1e-9 then
+        return math.huge
+    end
+    return math.max(w, h) / mn
+end
+
+local function homography_from_thin_single_quad(matches)
+    local n = 0
+    local thin = true
+    for _, m in ipairs(matches) do
+        if quad_corners(m.detected) then
+            n = n + 1
+            if expected_aspect(m.expected) < THIN_QUAD_ASPECT then
+                thin = false
+            end
+        end
+    end
+    return n == 1 and thin
+end
+
 local function fit_transform(matches, pairs, corner_pairs)
-    if #corner_pairs >= 4 then
+    if #corner_pairs >= 4 and not homography_from_thin_single_quad(matches) then
         local transform = fit_homography(corner_pairs)
         if transform then
             return transform, nil

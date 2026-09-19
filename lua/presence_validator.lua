@@ -178,6 +178,7 @@ local function flatten(objects, out)
             name = o.name,
             component_id = first_component_id(o),
             yolo_classes = yolo_classes_for(o),
+            yolo_class_refs = o.yolo_class_refs,
             ocr_values = ocr_values_for(o),
             presence = o.presence == true,
             is_anchor = o.is_anchor == true,
@@ -219,9 +220,17 @@ local function ocr_text_match(hay, needle)
     return text_match(hay, needle)
 end
 
+local function detection_matches_class(d, class)
+    if type(class_match) == "table" and type(class_match.match) == "function" then
+        return class_match.match(d, class)
+    end
+    local exp = type(class) == "table" and class.label or class
+    return d.label == exp
+end
+
 local function find_yolo(detections, class, claimed)
     for _, d in ipairs(detections) do
-        if not claimed[d._idx] and not is_ocr_detection(d) and d.label == class then
+        if not claimed[d._idx] and not is_ocr_detection(d) and detection_matches_class(d, class) then
             return d
         end
     end
@@ -343,7 +352,7 @@ local function build_class_instances(detections, classes, claimed)
     for _, class in ipairs(classes) do
         by_class[class] = {}
         for _, d in ipairs(detections) do
-            if not claimed[d._idx] and not is_ocr_detection(d) and d.label == class then
+            if not claimed[d._idx] and not is_ocr_detection(d) and detection_matches_class(d, class) then
                 table.insert(by_class[class], d)
             end
         end
@@ -707,7 +716,35 @@ local function copy_detection(d)
         width = d.width,
         height = d.height,
         kind = d.kind,
+        class_id = d.class_id,
+        vision_model_id = d.vision_model_id,
     }
+end
+
+local function object_classes(o)
+    if type(class_match) == "table" and type(class_match.expected_list) == "function" then
+        return class_match.expected_list(o)
+    end
+    return o.yolo_classes or {}
+end
+
+local function object_class_sig(o)
+    if type(class_match) == "table" and type(class_match.key) == "function" then
+        local keys = {}
+        for _, r in ipairs(object_classes(o)) do
+            table.insert(keys, class_match.key(r))
+        end
+        table.sort(keys)
+        return table.concat(keys, "\0")
+    end
+    return class_signature(o.yolo_classes or {})
+end
+
+local function detection_class_key(d)
+    if type(class_match) == "table" and type(class_match.key) == "function" then
+        return class_match.key(d)
+    end
+    return class_key(type(d) == "table" and d.label or d)
 end
 
 local function push_result(objects, o, status, matched_label, matched_confidence, match_kind, ocr_needle)
@@ -1070,7 +1107,7 @@ local function presence_validator(input)
         local on_rail = o.presence or has_ocr
         if on_rail and (has_ocr or has_yolo) then
             if o.presence and has_yolo then
-                local key = class_signature(o.yolo_classes)
+                local key = object_class_sig(o)
                 if not groups[key] then
                     groups[key] = {}
                     table.insert(group_order, key)
@@ -1085,7 +1122,7 @@ local function presence_validator(input)
     -- Competing / singleton YOLO groups.
     for _, key in ipairs(group_order) do
         local group = groups[key]
-        local classes = group[1].yolo_classes
+        local classes = object_classes(group[1])
         if #group == 1 then
             local o = group[1]
             local yolo_boxes = collect_yolo_boxes(detections, classes, claimed)
@@ -1140,8 +1177,8 @@ local function presence_validator(input)
                 loose_comp[cid] = true
             end
             classes_of[cid] = classes_of[cid] or {}
-            for _, class in ipairs(o.yolo_classes or {}) do
-                classes_of[cid][class_key(class)] = true
+            for _, class in ipairs(object_classes(o)) do
+                classes_of[cid][detection_class_key(class)] = true
             end
             if type(o.name) == "string" and trim(o.name) ~= "" then
                 names_of[cid] = names_of[cid] or {}
@@ -1166,7 +1203,7 @@ local function presence_validator(input)
         if is_ocr_detection(d) or claimed[d._idx] then
             return false
         end
-        if loose_skip[class_key(d.label)] then
+        if loose_skip[detection_class_key(d)] then
             return false
         end
         local named = d.matched_label or d.label
@@ -1206,7 +1243,7 @@ local function presence_validator(input)
     -- too when that component's loose quota is already met.
     local kept = {}
     for _, d in ipairs(extra_detections) do
-        if not loose_skip[class_key(d.label)] then
+        if not (loose_skip[detection_class_key(d)] or loose_skip[class_key(d.label)]) then
             local named = d.matched_label or d.label
             if not (type(named) == "string" and loose_names[trim(named):lower()]) then
                 table.insert(kept, d)
