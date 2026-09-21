@@ -9,6 +9,14 @@
 -- Position is radial only: catalog `distance` (or global `position`)
 -- compared to the previous step's `delta_position` (`N away`). No
 -- second measurement and no axis split.
+-- When the expected object has `real_size.long` (millimetres) and a
+-- board-space span is known (matched object-aligned box, else the
+-- expected placement), `delta_position` is converted to millimetres
+-- **and written back** so HUD / verdict `N mm` is millimetres:
+--   mm_per_unit = real_size.long / max(span_width, span_height)
+--   delta_mm    = delta_position * mm_per_unit
+-- Catalog `distance` is millimetres in that case. Without real size
+-- (or without a span), distance stays in board units.
 -- `rotation` is degrees and is independent, but only applied when the
 -- expected object's `symmetry` is a discrete period
 -- (`60` / `90` / `120` / `180`). `inf` and `0` leave the
@@ -65,6 +73,9 @@ local function flatten(objects, origin_x, origin_y, out)
             id = o.id,
             symmetry = o.symmetry or "inf",
             thresholds = o.thresholds,
+            real_size = o.real_size,
+            width = o.boundary and o.boundary.width or 0.0,
+            height = o.boundary and o.boundary.height or 0.0,
             yolo_classes = yolo_classes_for(o),
         })
         if o.children then
@@ -101,6 +112,52 @@ local function verdict_distance(obj)
     return 0.0
 end
 
+local function span_long(w, h)
+    w = type(w) == "number" and w or 0.0
+    h = type(h) == "number" and h or 0.0
+    return math.max(w, h)
+end
+
+local function box_long(obj)
+    return span_long(obj.matched_width, obj.matched_height)
+end
+
+local function real_long_mm(exp)
+    local rs = type(exp) == "table" and exp.real_size or nil
+    if type(rs) == "table" and type(rs.long) == "number" and rs.long > 0 then
+        return rs.long
+    end
+    return nil
+end
+
+-- Board-space length of the physical part: live object-aligned box when
+-- layout assigned one, otherwise the expected placement.
+local function unit_long(copy, exp)
+    local detected = box_long(copy)
+    if detected > 0 then
+        return detected
+    end
+    if type(exp) == "table" then
+        return span_long(exp.width, exp.height)
+    end
+    return 0.0
+end
+
+-- Convert board-unit `delta_position` into millimetres when the catalog
+-- part has a real size and a board-space span is known. Writes mm back
+-- onto `copy.delta_position` so inspect HUD / verdict show millimetres.
+local function position_delta(copy, exp)
+    local delta = verdict_distance(copy)
+    local long_mm = real_long_mm(exp)
+    local span = unit_long(copy, exp)
+    if long_mm ~= nil and span > 0 then
+        local mm = delta * (long_mm / span)
+        copy.delta_position = mm
+        return mm
+    end
+    return delta
+end
+
 local function object_thr(exp, global)
     local t = type(exp) == "table" and type(exp.thresholds) == "table" and exp.thresholds or {}
     return {
@@ -111,10 +168,11 @@ local function object_thr(exp, global)
     }
 end
 
-local function position_ok(copy, thr)
+local function position_ok(copy, exp, thr)
     if thr.distance ~= nil then
-        return verdict_distance(copy) <= thr.distance
+        return position_delta(copy, exp) <= thr.distance
     end
+    -- Global fallback stays board units even when real_size is set.
     return verdict_distance(copy) <= thr.global_position
 end
 
@@ -164,7 +222,7 @@ local function ruller(input)
             local exp = find_expected(expected_flat, copy.id)
             if exp then
                 local thr = object_thr(exp, thresholds)
-                local ok_pos = position_ok(copy, thr)
+                local ok_pos = position_ok(copy, exp, thr)
                 local ok_rot
                 if rotation_thresholds_apply(exp.symmetry) then
                     ok_rot = true
