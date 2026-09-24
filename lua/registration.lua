@@ -290,11 +290,21 @@ local function pick_detection_for_expected(o, expected_flat, detections)
     end)
 
     -- Visual aspect is the primary signal; Y-rank breaks near-ties.
+    -- A sole expected of this class (the wood-block anchor) must not
+    -- bind a pin that YOLO also labelled "block" — those share aspect
+    -- and Y-rank then picks whichever sits higher on the JPEG. Prefer
+    -- the largest AABB when there is only one expected of the class.
     local best, best_score = nil, math.huge
     for i, d in ipairs(candidates) do
         local cost = aspect_cost(d, o)
         local rank_pen = math.abs(i - rank) * 0.15
-        local score = cost + rank_pen
+        local area = (d.width or 0.0) * (d.height or 0.0)
+        local score
+        if #peers <= 1 then
+            score = cost - 4.0 * area
+        else
+            score = cost + rank_pen
+        end
         if score < best_score then
             best_score = score
             best = d
@@ -706,34 +716,59 @@ local function expected_classes(o)
         or (o.yolo_classes or {})
 end
 
--- How well `t` maps the rest of the expected layout onto detections of
--- the same class. `nil` when nothing besides the matched anchor is
--- visible — then the caller falls back to the smallest |rotation|.
-local function scene_cost(t, expected_flat, frames, skip)
+-- How well `t` maps the rest of the expected layout onto the scene.
+-- Same-class detections win when labels line up; otherwise any other
+-- detection still votes. A 180° rectangle pairing maps the anchor onto
+-- itself and throws every other part to the empty side of the board.
+-- `nil` when nothing besides the matched anchor is visible.
+local function nearest_det_dist(fx, fy, frames, skip_detected, classes)
+    local classed = type(classes) == "table" and #classes > 0
+    local best = math.huge
+    for _, frame in ipairs(frames or {}) do
+        for _, d in ipairs(frame.detections or {}) do
+            if d ~= skip_detected and (not classed or label_in_classes(d, classes)) then
+                local dx, dy = center(d)
+                local dist = (dx - fx) * (dx - fx) + (dy - fy) * (dy - fy)
+                if dist < best then
+                    best = dist
+                end
+            end
+        end
+    end
+    if best < math.huge then
+        return best
+    end
+    if not classed then
+        return nil
+    end
+    for _, frame in ipairs(frames or {}) do
+        for _, d in ipairs(frame.detections or {}) do
+            if d ~= skip_detected then
+                local dx, dy = center(d)
+                local dist = (dx - fx) * (dx - fx) + (dy - fy) * (dy - fy)
+                if dist < best then
+                    best = dist
+                end
+            end
+        end
+    end
+    if best < math.huge then
+        return best
+    end
+    return nil
+end
+
+local function scene_cost(t, expected_flat, frames, skip_expected, skip_detected)
     local cost, n = 0.0, 0
     for _, o in ipairs(expected_flat) do
-        if o ~= skip then
-            local classes = expected_classes(o)
-            if #classes > 0 then
-                local ex, ey = center(o)
-                local fx, fy = apply_transform(t, ex, ey)
-                if fx ~= nil then
-                    local best = math.huge
-                    for _, frame in ipairs(frames or {}) do
-                        for _, d in ipairs(frame.detections or {}) do
-                            if label_in_classes(d, classes) then
-                                local dx, dy = center(d)
-                                local dist = (dx - fx) * (dx - fx) + (dy - fy) * (dy - fy)
-                                if dist < best then
-                                    best = dist
-                                end
-                            end
-                        end
-                    end
-                    if best < math.huge then
-                        cost = cost + best
-                        n = n + 1
-                    end
+        if o ~= skip_expected then
+            local ex, ey = center(o)
+            local fx, fy = apply_transform(t, ex, ey)
+            if fx ~= nil then
+                local best = nearest_det_dist(fx, fy, frames, skip_detected, expected_classes(o))
+                if best ~= nil then
+                    cost = cost + best
+                    n = n + 1
                 end
             end
         end
@@ -766,8 +801,10 @@ end
 -- and unregisters every other part to the far side of the board.
 -- Try all 4 starts × 2 windings. Keep only well-scaled, low-residual
 -- fits (a reflection pairing collapses scale). Among those, prefer
--- the candidate that lands the rest of the scene, else the smallest
--- |rotation| — so a box stored at ~177° does not invent a flip.
+-- the candidate that lands the rest of the scene (class, else any
+-- detection). Smallest |rotation| only when the scene is empty —
+-- otherwise a ~177° stored box invents a flip while JPEG boxes stay
+-- on the parts.
 local function single_quad_similarity(match, expected_flat, frames)
     local det = quad_corners(match.detected)
     if not det then
@@ -783,8 +820,13 @@ local function single_quad_similarity(match, expected_flat, frames)
                 table.insert(cands, {
                     t = t,
                     rss = similarity_residual(t, pairs),
-                    rot = math.abs(wrap_deg(transform_rotation_deg(t))),
-                    scene = scene_cost(t, expected_flat, frames, match.expected),
+                    scene = scene_cost(
+                        t,
+                        expected_flat,
+                        frames,
+                        match.expected,
+                        match.detected
+                    ),
                 })
             end
         end
@@ -804,15 +846,15 @@ local function single_quad_similarity(match, expected_flat, frames)
     for _, c in ipairs(cands) do
         if c.rss <= rss_cut then
             if c.scene ~= nil then
-                if not have_scene
-                    or c.scene < best_scene - 1e-10
-                    or (math.abs(c.scene - best_scene) < 1e-10 and c.rot < best_rot)
-                then
-                    best, best_scene, best_rot = c.t, c.scene, c.rot
+                if not have_scene or c.scene < best_scene - 1e-10 then
+                    best, best_scene = c.t, c.scene
                 end
                 have_scene = true
-            elseif not have_scene and c.rot < best_rot then
-                best, best_rot = c.t, c.rot
+            elseif not have_scene then
+                local rot = math.abs(wrap_deg(transform_rotation_deg(c.t)))
+                if rot < best_rot then
+                    best, best_rot = c.t, rot
+                end
             end
         end
     end
@@ -849,6 +891,129 @@ local function fit_transform(matches, pairs, corner_pairs, expected_flat, frames
         return single_anchor_transform(matches[1]), nil
     end
     return similarity_transform(pairs)
+end
+
+local function match_is_expected(matches, o)
+    for _, m in ipairs(matches) do
+        if m.expected == o then
+            return true
+        end
+    end
+    return false
+end
+
+local function detection_claimed(matches, d)
+    for _, m in ipairs(matches) do
+        if m.detected == d then
+            return true
+        end
+    end
+    return false
+end
+
+-- After the anchor-only similarity, pair every other expected object
+-- with the nearest unused detection (same class, else any) that the
+-- coarse T already lands nearby. Those centers pull scale/rotation so
+-- pins 30–60 board units off the single-rect map snap onto their slots.
+-- Corner index-pairing is *not* reused here — a pin quad has the same
+-- 180° ambiguity as the anchor, and a bad shift would undo the scene
+-- vote `single_quad_similarity` already made.
+local function collect_scene_matches(t, expected_flat, frames, anchor_matches)
+    local extra = {}
+    local claimed = {}
+    for _, m in ipairs(anchor_matches) do
+        table.insert(claimed, m)
+    end
+    for _, o in ipairs(expected_flat) do
+        if not match_is_expected(anchor_matches, o) then
+            local classes = expected_classes(o)
+            if type(classes) == "table" and #classes > 0 then
+                local ex, ey = center(o)
+                local fx, fy = apply_transform(t, ex, ey)
+                if fx ~= nil then
+                    local best, best_dist, best_classed = nil, math.huge, false
+                    for _, frame in ipairs(frames or {}) do
+                        for _, d in ipairs(frame.detections or {}) do
+                            if not detection_claimed(claimed, d) then
+                                local dx, dy = center(d)
+                                local dist = (dx - fx) * (dx - fx) + (dy - fy) * (dy - fy)
+                                local classed = label_in_classes(d, classes)
+                                local take = false
+                                if classed and (not best_classed or dist < best_dist) then
+                                    take = true
+                                elseif not best_classed and not classed and dist < best_dist then
+                                    take = true
+                                end
+                                if take then
+                                    best, best_dist, best_classed = d, dist, classed
+                                end
+                            end
+                        end
+                    end
+                    -- ~0.18 of the frame — 36–59 board units at the
+                    -- live 0.001 scale is 0.04–0.07; keep a gate wide
+                    -- enough for the coarse residual, tight enough to
+                    -- ignore a second-block ghost on the far side.
+                    if best and best_dist < 0.18 * 0.18 then
+                        local pair = { expected = o, detected = best }
+                        table.insert(extra, pair)
+                        table.insert(claimed, pair)
+                    end
+                end
+            end
+        end
+    end
+    return extra
+end
+
+local function refine_with_scene(t0, anchor_matches, expected_flat, frames)
+    local extra = collect_scene_matches(t0, expected_flat, frames, anchor_matches)
+    if #extra == 0 then
+        return t0
+    end
+    local pairs = {}
+    local function add_center(m)
+        local ex, ey = center(m.expected)
+        local dx, dy = center(m.detected)
+        table.insert(pairs, {
+            board_x = ex,
+            board_y = ey,
+            frame_x = dx,
+            frame_y = dy,
+        })
+    end
+    for _, m in ipairs(anchor_matches) do
+        add_center(m)
+    end
+    for _, m in ipairs(extra) do
+        add_center(m)
+    end
+    if #pairs < 2 then
+        return t0
+    end
+    local t1 = similarity_transform(pairs)
+    if not t1 or transform_scale(t1) < 1e-8 then
+        return t0
+    end
+    local s0, s1 = transform_scale(t0), transform_scale(t1)
+    if s1 < s0 * 0.4 or s1 > s0 * 2.5 then
+        return t0
+    end
+    local r0, r1 = 0.0, 0.0
+    for _, m in ipairs(extra) do
+        local ex, ey = center(m.expected)
+        local dx, dy = center(m.detected)
+        local f0x, f0y = apply_transform(t0, ex, ey)
+        local f1x, f1y = apply_transform(t1, ex, ey)
+        if f0x ~= nil and f1x ~= nil then
+            r0 = r0 + (f0x - dx) * (f0x - dx) + (f0y - dy) * (f0y - dy)
+            r1 = r1 + (f1x - dx) * (f1x - dx) + (f1y - dy) * (f1y - dy)
+        end
+    end
+    if r1 <= r0 * 1.05 then
+        return t1
+    end
+    return t0
 end
 
 -- Confidence heuristic: two anchors is enough to fully constrain a
@@ -1049,6 +1214,9 @@ local function registration(input)
     local pairs = collect_point_pairs(matches)
     local corner_pairs = collect_corner_pairs(matches)
     local transform, err = fit_transform(matches, pairs, corner_pairs, expected_flat, frames)
+    if transform then
+        transform = refine_with_scene(transform, matches, expected_flat, frames)
+    end
 
     if not transform then
         return {

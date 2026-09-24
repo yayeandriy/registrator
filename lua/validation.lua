@@ -280,6 +280,59 @@ local function angle_diff_with_symmetry(a, b, symmetry)
     return diff
 end
 
+-- Heading of the long side of a *local* box + `rotation` (expected
+-- objects). A tall 2×8 at 0° and a wide 8×2 stored at 90° are the same
+-- rectangle — raw `rotation` differs by 90° under period-180.
+local function long_axis_heading(rot, w, h)
+    rot = type(rot) == "number" and rot or 0.0
+    w = type(w) == "number" and w or 0.0
+    h = type(h) == "number" and h or 0.0
+    if w >= h then
+        return rot
+    end
+    return rot + 90.0
+end
+
+-- Fold into (-90, 90].
+local function wrap_signed_90(deg)
+    local a = deg % 180.0
+    if a > 90.0 then
+        a = a - 180.0
+    elseif a <= -90.0 then
+        a = a + 180.0
+    end
+    return a
+end
+
+-- Registered detections store the AABB of unregistered corners plus the
+-- top-edge angle. A wide AABB with top-edge ~87° is a horizontal pin
+-- whose detector ordered a tall local box at 90° — the visual long axis
+-- is 0°, not 87°. Treating AABB w/h as a local box invented a 90° miss
+-- against a 267° stored placement (mask-fit canonicalize).
+local function registered_long_axis_heading(rot, w, h)
+    rot = type(rot) == "number" and rot or 0.0
+    w = type(w) == "number" and w or 0.0
+    h = type(h) == "number" and h or 0.0
+    local aspect = w / math.max(h, 1e-6)
+    -- Near-square AABB: the top edge *is* the heading. Only a clearly
+    -- wide/tall envelope disagrees with a ~90° top-edge (detector
+    -- ordered a tall local box on a horizontal pin).
+    if aspect < 1.2 and aspect > (1.0 / 1.2) then
+        return long_axis_heading(rot, w, h)
+    end
+    local tilt = wrap_signed_90(rot)
+    if w >= h then
+        if math.abs(tilt) <= 45.0 then
+            return tilt
+        end
+        return 0.0
+    end
+    if math.abs(tilt) > 45.0 then
+        return rot
+    end
+    return 90.0 + tilt
+end
+
 -- Nearest same-class (or same-text) detection to this expected object's
 -- center among detections not yet claimed by another expected object.
 local function nearest_match(o, detections, claimed)
@@ -345,8 +398,8 @@ local function validate_same_class(o, detections, thresholds, claimed)
     local rotation_ok = true
     if detected.rotation ~= nil and type(detected.rotation) == "number" then
         delta_rotation = angle_diff_with_symmetry(
-            detected.rotation,
-            o.rotation or 0.0,
+            registered_long_axis_heading(detected.rotation, detected.width, detected.height),
+            long_axis_heading(o.rotation or 0.0, o.width, o.height),
             o.symmetry
         )
         rotation_ok = delta_rotation <= thresholds.rotation
