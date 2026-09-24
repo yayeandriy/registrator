@@ -130,17 +130,17 @@ local function real_long_mm(exp)
     return nil
 end
 
--- Board-space length of the physical part: live object-aligned box when
--- layout assigned one, otherwise the expected placement.
+-- Board-space length of the physical part. The expected placement is
+-- the ruler — a collapsed or AABB-inflated matched box used to turn a
+-- sub-board-unit delta into hundreds of millimetres.
 local function unit_long(copy, exp)
-    local detected = box_long(copy)
-    if detected > 0 then
-        return detected
-    end
     if type(exp) == "table" then
-        return span_long(exp.width, exp.height)
+        local expected = span_long(exp.width, exp.height)
+        if expected > 0 then
+            return expected
+        end
     end
-    return 0.0
+    return box_long(copy)
 end
 
 -- Convert board-unit `delta_position` into millimetres when the catalog

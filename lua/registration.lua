@@ -29,9 +29,12 @@
 -- optional — its own quad (e.g. fit to a segmentation mask), ordered
 -- clockwise from top-left `{top_left, top_right, bottom_right,
 -- bottom_left}`, as opposed to the plain axis-aligned `x/y/width/height`
--- box every producer reports today. When present, it's paired index-for-
--- index against the matched anchor's own `expected_corners`, in the same
--- order.
+-- box every producer reports today. Producers do not always honour that
+-- start corner (or even the winding). A single rectangle is 180°-
+-- ambiguous, so index pairing can invent a flip that maps the anchor
+-- onto itself and throws every other part across the board. One matched
+-- quad tries every cyclic shift and winding and keeps the similarity
+-- that lands the rest of the scene.
 --
 -- Output:
 --   {
@@ -69,13 +72,15 @@
 --     general *affine* least-squares fit — rotation, independent
 --     per-axis scale, and shear, but still no perspective (`px`/`py`
 --     stay 0).
---   - 4+ *genuine* quad-corner pairs (see `collect_corner_pairs`): a
---     full projective homography fit, capable of undoing real
---     perspective/keystone. One compact (near-square) anchor quad is
---     enough — that is the usual single-anchor path. A *thin* single
---     rectangle (aspect ≥ 2, e.g. a long block) can pin 8 DoF
---     numerically but the map is ill-conditioned away from that quad,
---     so that case stays on the affine / single-anchor tier.
+--   - 1 matched quad (4 genuine corners): a similarity transform
+--     (uniform scale + rotation + translation). Corners are *not*
+--     paired by index — a rectangle cannot tell 0° from 180°, and a
+--     wrong start corner invents a flip. A homography from one
+--     rectangle overfits corner noise and explodes objects away from
+--     the anchor — live boxes stay on the part while Spatial reports
+--     hundreds of millimetres.
+--   - 2+ matched quads (8+ genuine corners): a full projective
+--     homography, capable of undoing real perspective/keystone.
 -- `registered_detections` is the actual point of registration: every given
 -- detection, run back through the *inverse* of that same transform, so its
 -- position and size are expressed in the expected layout's own board-unit
@@ -169,8 +174,8 @@ end
 
 -- A flattened expected object's own true oriented 4 corners — its
 -- (unrotated) box rotated by its own `rotation` around its center —
--- ordered to match `Detection.corners`'s clockwise-from-top-left
--- convention so the two can be paired up index-for-index. Reduces to the
+-- ordered clockwise from top-left. A single matched quad does not pair
+-- these by index (see `single_quad_similarity`). Reduces to the
 -- object's plain axis-aligned corners whenever `rotation` is `0.0` (every
 -- admin-drawn object today).
 local function expected_corners(o)
@@ -654,41 +659,182 @@ local function fit_homography(pairs)
     }, nil
 end
 
+-- Wrap degrees into (-180, 180].
+local function wrap_deg(deg)
+    return (deg + 180.0) % 360.0 - 180.0
+end
+
+local function transform_rotation_deg(t)
+    return math.deg(math.atan(t.c, t.a))
+end
+
+local function apply_transform(t, x, y)
+    local w = (t.px or 0.0) * x + (t.py or 0.0) * y + 1.0
+    if math.abs(w) < 1e-12 then
+        return nil, nil
+    end
+    return (t.a * x + t.b * y + t.tx) / w, (t.c * x + t.d * y + t.ty) / w
+end
+
+-- Detected-quad index for expected corner `i` (1-based) after a cyclic
+-- shift and optional reverse winding.
+local function corner_index(i, shift, reverse)
+    local k = (i - 1 + shift) % 4
+    if reverse then
+        k = (4 - k) % 4
+    end
+    return k + 1
+end
+
+local function pair_quads(exp_corners, det_corners, shift, reverse)
+    local pairs = {}
+    for i = 1, 4 do
+        local j = corner_index(i, shift, reverse)
+        local p = det_corners[j]
+        table.insert(pairs, {
+            board_x = exp_corners[i][1],
+            board_y = exp_corners[i][2],
+            frame_x = p.x,
+            frame_y = p.y,
+        })
+    end
+    return pairs
+end
+
+local function expected_classes(o)
+    return (type(class_match) == "table" and class_match.expected_list(o))
+        or (o.yolo_classes or {})
+end
+
+-- How well `t` maps the rest of the expected layout onto detections of
+-- the same class. `nil` when nothing besides the matched anchor is
+-- visible — then the caller falls back to the smallest |rotation|.
+local function scene_cost(t, expected_flat, frames, skip)
+    local cost, n = 0.0, 0
+    for _, o in ipairs(expected_flat) do
+        if o ~= skip then
+            local classes = expected_classes(o)
+            if #classes > 0 then
+                local ex, ey = center(o)
+                local fx, fy = apply_transform(t, ex, ey)
+                if fx ~= nil then
+                    local best = math.huge
+                    for _, frame in ipairs(frames or {}) do
+                        for _, d in ipairs(frame.detections or {}) do
+                            if label_in_classes(d, classes) then
+                                local dx, dy = center(d)
+                                local dist = (dx - fx) * (dx - fx) + (dy - fy) * (dy - fy)
+                                if dist < best then
+                                    best = dist
+                                end
+                            end
+                        end
+                    end
+                    if best < math.huge then
+                        cost = cost + best
+                        n = n + 1
+                    end
+                end
+            end
+        end
+    end
+    if n == 0 then
+        return nil
+    end
+    return cost / n
+end
+
+local function transform_scale(t)
+    return math.sqrt((t.a or 0.0) * (t.a or 0.0) + (t.c or 0.0) * (t.c or 0.0))
+end
+
+local function similarity_residual(t, pairs)
+    local rss = 0.0
+    for _, p in ipairs(pairs) do
+        local fx, fy = apply_transform(t, p.board_x, p.board_y)
+        if fx == nil then
+            return math.huge
+        end
+        local dx, dy = fx - p.frame_x, fy - p.frame_y
+        rss = rss + dx * dx + dy * dy
+    end
+    return rss
+end
+
+-- One rectangle cannot pin a unique similarity: index pairing of a
+-- 180°-shifted (or reverse-wound) quad maps the anchor onto itself
+-- and unregisters every other part to the far side of the board.
+-- Try all 4 starts × 2 windings. Keep only well-scaled, low-residual
+-- fits (a reflection pairing collapses scale). Among those, prefer
+-- the candidate that lands the rest of the scene, else the smallest
+-- |rotation| — so a box stored at ~177° does not invent a flip.
+local function single_quad_similarity(match, expected_flat, frames)
+    local det = quad_corners(match.detected)
+    if not det then
+        return nil
+    end
+    local exp = expected_corners(match.expected)
+    local cands = {}
+    for reverse = 0, 1 do
+        for shift = 0, 3 do
+            local pairs = pair_quads(exp, det, shift, reverse == 1)
+            local t = similarity_transform(pairs)
+            if t and transform_scale(t) > 1e-8 then
+                table.insert(cands, {
+                    t = t,
+                    rss = similarity_residual(t, pairs),
+                    rot = math.abs(wrap_deg(transform_rotation_deg(t))),
+                    scene = scene_cost(t, expected_flat, frames, match.expected),
+                })
+            end
+        end
+    end
+    if #cands == 0 then
+        return nil
+    end
+    local best_rss = math.huge
+    for _, c in ipairs(cands) do
+        if c.rss < best_rss then
+            best_rss = c.rss
+        end
+    end
+    local rss_cut = best_rss + 1e-10 + 0.05 * math.max(best_rss, 1e-12)
+    local best, best_scene, best_rot = nil, math.huge, math.huge
+    local have_scene = false
+    for _, c in ipairs(cands) do
+        if c.rss <= rss_cut then
+            if c.scene ~= nil then
+                if not have_scene
+                    or c.scene < best_scene - 1e-10
+                    or (math.abs(c.scene - best_scene) < 1e-10 and c.rot < best_rot)
+                then
+                    best, best_scene, best_rot = c.t, c.scene, c.rot
+                end
+                have_scene = true
+            elseif not have_scene and c.rot < best_rot then
+                best, best_rot = c.t, c.rot
+            end
+        end
+    end
+    return best
+end
+
 -- Picks the richest transform the available point pairs actually support
 -- — see this file's header comment for the 4 tiers. Falls back to the
 -- next tier down whenever a richer fit turns out degenerate (e.g.
 -- collinear points), rather than failing outright.
--- Long thin single quads invent a perspective map that explodes away
--- from the object. Compact (near-square) single anchors are fine.
-local THIN_QUAD_ASPECT = 2.0
-
-local function expected_aspect(expected)
-    local w = tonumber(expected.width) or 0.0
-    local h = tonumber(expected.height) or 0.0
-    local mn = math.min(w, h)
-    if mn < 1e-9 then
-        return math.huge
-    end
-    return math.max(w, h) / mn
-end
-
-local function homography_from_thin_single_quad(matches)
-    local n = 0
-    local thin = true
-    for _, m in ipairs(matches) do
-        if quad_corners(m.detected) then
-            n = n + 1
-            if expected_aspect(m.expected) < THIN_QUAD_ASPECT then
-                thin = false
-            end
+local function fit_transform(matches, pairs, corner_pairs, expected_flat, frames)
+    -- Two or more quads (8 corners) can pin a homography. One rectangle
+    -- cannot — the 8-DoF fit is ill-conditioned and throws nearby parts
+    -- across the board while the JPEG overlay still looks aligned.
+    if #corner_pairs >= 8 then
+        local transform = fit_homography(corner_pairs)
+        if transform then
+            return transform, nil
         end
     end
-    return n == 1 and thin
-end
-
-local function fit_transform(matches, pairs, corner_pairs)
-    if #corner_pairs >= 4 and not homography_from_thin_single_quad(matches) then
-        local transform = fit_homography(corner_pairs)
+    if #matches == 1 and #corner_pairs >= 4 then
+        local transform = single_quad_similarity(matches[1], expected_flat, frames)
         if transform then
             return transform, nil
         end
@@ -747,12 +893,26 @@ end
 -- plain resize whenever the fitted transform has shear, off-axis scale,
 -- or perspective.
 local function register_detection(hinv, d)
-    local box_corners = {
-        { d.x, d.y },
-        { d.x + d.width, d.y },
-        { d.x, d.y + d.height },
-        { d.x + d.width, d.y + d.height },
-    }
+    -- Prefer the object-aligned quad. The AABB envelope of a rotated pin
+    -- is a different box than the part — using it as the registered
+    -- pose both shifts the center and wrecks the millimetre ruler.
+    local box_corners
+    local qc = quad_corners(d)
+    if qc then
+        box_corners = {
+            { qc[1].x, qc[1].y },
+            { qc[2].x, qc[2].y },
+            { qc[3].x, qc[3].y },
+            { qc[4].x, qc[4].y },
+        }
+    else
+        box_corners = {
+            { d.x, d.y },
+            { d.x + d.width, d.y },
+            { d.x, d.y + d.height },
+            { d.x + d.width, d.y + d.height },
+        }
+    end
     local min_x, max_x, min_y, max_y = math.huge, -math.huge, math.huge, -math.huge
     for _, corner in ipairs(box_corners) do
         local bx, by = unregister_point(hinv, corner[1], corner[2])
@@ -888,7 +1048,7 @@ local function registration(input)
 
     local pairs = collect_point_pairs(matches)
     local corner_pairs = collect_corner_pairs(matches)
-    local transform, err = fit_transform(matches, pairs, corner_pairs)
+    local transform, err = fit_transform(matches, pairs, corner_pairs, expected_flat, frames)
 
     if not transform then
         return {
