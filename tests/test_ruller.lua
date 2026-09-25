@@ -14,7 +14,7 @@ local function expected_obj(id, class, x, y, w, h, thresholds, symmetry)
         yolo_classes = { class },
         boundary = { x = x, y = y, width = w, height = h },
         rotation = 0.0,
-        is_anchor = true,
+        is_anchor = false,
         children = {},
         thresholds = thresholds,
         symmetry = symmetry,

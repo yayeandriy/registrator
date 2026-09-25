@@ -76,6 +76,99 @@ end)()
 t.eq(rotation_result.objects[1].status, "misrotated", "rotation: misrotated despite exact position match")
 t.close(rotation_result.objects[1].delta_rotation, 85.0, 1e-6, "rotation: delta_rotation folded correctly")
 
+-- Lock-relative pose: the lock vs itself is the origin, so a large
+-- absolute residual is still matched. A pin that rides with the lock
+-- matches; a pin rotated vs the lock is misrotated.
+local lock_frame = (function()
+    local input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000lk",
+                yolo_classes = { "block" },
+                boundary = { x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+                rotation = 0.0,
+                is_anchor = true,
+                children = {},
+            },
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000pn",
+                yolo_classes = { "pin" },
+                boundary = { x = 0.0, y = 20.0, width = 4.0, height = 10.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+        },
+        registered_detections = {
+            { label = "block", confidence = 0.9, x = 20.0, y = 0.0, width = 10.0, height = 4.0, rotation = 95.0 },
+            { label = "pin", confidence = 0.9, x = 20.0, y = 20.0, width = 4.0, height = 10.0, rotation = 95.0 },
+        },
+        thresholds = { position = 8.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(input)))
+end)()
+local lock_obj = find_object(lock_frame.objects, "8e7f6b3a-0000-4000-8000-0000000000lk")
+local pin_ok = find_object(lock_frame.objects, "8e7f6b3a-0000-4000-8000-0000000000pn")
+t.eq(lock_obj.status, "matched", "lock-frame: lock residual is the origin")
+t.close(lock_obj.delta_position, 0.0, 1e-6, "lock-frame: lock delta_position is 0")
+t.close(lock_obj.delta_rotation, 0.0, 1e-6, "lock-frame: lock delta_rotation is 0")
+t.eq(pin_ok.status, "matched", "lock-frame: pin that rides with the lock matches")
+
+-- AABB top-edge vs the image (150.5°) is not the lock-point transform.
+local lock_aabb = (function()
+    local input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000lk",
+                yolo_classes = { "block" },
+                boundary = { x = 0.0, y = 0.0, width = 190.0, height = 290.0 },
+                rotation = 0.0,
+                is_anchor = true,
+                children = {},
+            },
+        },
+        registered_detections = {
+            { label = "block", confidence = 0.91, x = 14.2, y = 74.8, width = 194.1, height = 289.9, rotation = 150.5 },
+        },
+        thresholds = { position = 30.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(input)))
+end)()
+t.eq(lock_aabb.objects[1].status, "matched", "lock AABB heading vs frame is not a residual")
+t.close(lock_aabb.objects[1].delta_rotation, 0.0, 1e-6, "lock dRot is 0 in the point frame")
+t.close(lock_aabb.objects[1].delta_position, 0.0, 1e-6, "lock dPos is 0 in the point frame")
+
+local pin_rot = (function()
+    local input = {
+        expected = {
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000lk",
+                yolo_classes = { "block" },
+                boundary = { x = 0.0, y = 0.0, width = 10.0, height = 4.0 },
+                rotation = 0.0,
+                is_anchor = true,
+                children = {},
+            },
+            {
+                id = "8e7f6b3a-0000-4000-8000-0000000000pn",
+                yolo_classes = { "pin" },
+                boundary = { x = 0.0, y = 20.0, width = 4.0, height = 10.0 },
+                rotation = 0.0,
+                is_anchor = false,
+                children = {},
+            },
+        },
+        registered_detections = {
+            { label = "block", confidence = 0.9, x = 20.0, y = 0.0, width = 10.0, height = 4.0, rotation = 95.0 },
+            { label = "pin", confidence = 0.9, x = 20.0, y = 20.0, width = 4.0, height = 10.0, rotation = 135.0 },
+        },
+        thresholds = { position = 8.0, rotation = 30.0 },
+    }
+    return json.decode(json.encode(validation(input)))
+end)()
+t.eq(find_object(pin_rot.objects, "8e7f6b3a-0000-4000-8000-0000000000lk").status, "matched", "lock-frame: lock still origin when pin is off")
+t.eq(find_object(pin_rot.objects, "8e7f6b3a-0000-4000-8000-0000000000pn").status, "misrotated", "lock-frame: pin rotated vs lock is misrotated")
+
 -- Two expected capacitors; only one detection. The matched sibling must not
 -- make the empty slot read as mismatched ("wrong type").
 local neighbor_result = (function()

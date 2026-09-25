@@ -99,6 +99,46 @@ local missing = layout({
 t.eq(missing.objects[1].status, "missing", "no same-class: missing")
 t.eq(missing.extra, 1, "wrong-class leftover is extra when far")
 
+-- Layout used to compare AABB top-edge vs the image axes (dRot=150.5)
+-- and overwrite the lock-point frame. The lock vs itself is the origin.
+local lock_expected = {
+    {
+        id = "lock",
+        yolo_classes = { "block" },
+        boundary = { x = 0.0, y = 0.0, width = 190.0, height = 290.0 },
+        rotation = 0.0,
+        is_anchor = true,
+        children = {},
+    },
+}
+local lock_det = {
+    {
+        label = "block",
+        confidence = 0.91,
+        x = 14.2,
+        y = 74.8,
+        width = 194.1,
+        height = 289.9,
+        rotation = 150.5,
+        kind = "yolo",
+    },
+}
+local lock_raw = validation({
+    expected = lock_expected,
+    registered_detections = lock_det,
+    thresholds = { position = 30.0, rotation = 30.0 },
+})
+local lock_laid = layout({
+    expected = lock_expected,
+    registered_detections = lock_det,
+    validation = lock_raw,
+    thresholds = { position = 30.0, rotation = 30.0 },
+    enabled = true,
+})
+t.eq(lock_laid.objects[1].status, "matched", "lock AABB heading is not a residual")
+t.close(lock_laid.objects[1].delta_rotation, 0.0, 1e-6, "layout lock dRot is 0")
+t.close(lock_laid.objects[1].delta_position, 0.0, 1e-6, "layout lock dPos is 0")
+
 if not t.summary("layout") then
     os.exit(1)
 end

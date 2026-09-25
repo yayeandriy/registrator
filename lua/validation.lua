@@ -6,7 +6,8 @@
 -- run's own `registered_detections`, already expressed in the expected
 -- layout's board-unit space), check every expected reference object for
 -- a correspondingly-classed detection nearby, in both position *and*
--- orientation — the same "single source of truth in Lua, run identically
+-- orientation. When a lock is paired, those deltas live in the lock's
+-- frame (the lock vs itself is the origin). The same "single source of truth in Lua, run identically
 -- everywhere" rationale as `registration.lua` applies here too, since
 -- "how close is close enough" is exactly the kind of per-deployment
 -- tuning knob that shouldn't fork into separate native implementations.
@@ -378,50 +379,95 @@ local function nearest_any_match(o, detections, claimed, expected_flat)
     return best, best_dist
 end
 
--- Same-class outcome (matched / mispositioned / misrotated / …).
--- Returns nil, nil when no same-class detection remains unclaimed.
-local function validate_same_class(o, detections, thresholds, claimed)
-    local detected, delta_position = nearest_match(o, detections, claimed)
-    if not detected then
-        return nil, nil
+local function heading_of_expected(o)
+    return long_axis_heading(o.rotation or 0.0, o.width, o.height)
+end
+
+local function heading_of_detected(d)
+    if type(d.rotation) == "number" then
+        return registered_long_axis_heading(d.rotation, d.width, d.height)
     end
+    return nil
+end
 
-    local position_ok = delta_position <= thresholds.position
+-- Pose in the frame the lock's *points* already defined (registration
+-- T^{-1}). Board-space positions are lock-center-relative — the AABB
+-- heading vs the image axes is not T and must not rotate those vectors.
+-- The lock vs itself is the origin (relative position 0, relative
+-- heading 0) because both sides use the same lock measurement — not a
+-- status skip.
+local function pose_in_lock_frame(o, detected, lock_exp, lock_det)
+    local ox, oy = center(o)
+    local dx, dy = center(detected)
+    local lx, ly = center(lock_exp)
+    local mx, my = center(lock_det)
+    local delta_position = distance(ox - lx, oy - ly, dx - mx, dy - my)
 
-    -- Only meaningful when *both* sides actually carry an orientation:
-    -- the expected object's `rotation` is always defined (defaults to
-    -- `0.0`), but a registered detection's is `nil` unless its original
-    -- detection reported a real quad (see `registration.lua`'s
-    -- `register_detection`) — treated as "can't judge, don't penalize"
-    -- rather than as a mismatch.
+    local h_lock_e = heading_of_expected(lock_exp)
+    local h_lock_d = heading_of_detected(lock_det) or h_lock_e
     local delta_rotation = nil
-    local rotation_ok = true
-    if detected.rotation ~= nil and type(detected.rotation) == "number" then
+    local h_d = heading_of_detected(detected)
+    if h_d ~= nil then
         delta_rotation = angle_diff_with_symmetry(
-            registered_long_axis_heading(detected.rotation, detected.width, detected.height),
-            long_axis_heading(o.rotation or 0.0, o.width, o.height),
+            h_d - h_lock_d,
+            heading_of_expected(o) - h_lock_e,
             o.symmetry
         )
+    end
+    return delta_position, delta_rotation
+end
+
+local function pose_absolute(o, detected)
+    local ex, ey = center(o)
+    local dx, dy = center(detected)
+    local delta_position = distance(ex, ey, dx, dy)
+    local delta_rotation = nil
+    if heading_of_detected(detected) ~= nil then
+        delta_rotation = angle_diff_with_symmetry(
+            heading_of_detected(detected),
+            heading_of_expected(o),
+            o.symmetry
+        )
+    end
+    return delta_position, delta_rotation
+end
+
+local function outcome_from_deltas(delta_position, delta_rotation, thresholds)
+    local position_ok = delta_position <= thresholds.position
+    local rotation_ok = true
+    if delta_rotation ~= nil then
         rotation_ok = delta_rotation <= thresholds.rotation
     end
-
-    local status
     if position_ok and rotation_ok then
-        status = "matched"
+        return "matched"
     elseif not position_ok and not rotation_ok then
-        status = "mispositioned_misrotated"
+        return "mispositioned_misrotated"
     elseif not position_ok then
-        status = "mispositioned"
-    else
-        status = "misrotated"
+        return "mispositioned"
     end
+    return "misrotated"
+end
 
+-- Same-class outcome. When a lock is paired, pose is in that lock's
+-- frame so the lock's own residual is identically zero.
+local function score_same_class(o, detected, thresholds, lock_frame)
+    local delta_position, delta_rotation
+    if lock_frame then
+        delta_position, delta_rotation = pose_in_lock_frame(
+            o,
+            detected,
+            lock_frame.expected,
+            lock_frame.detected
+        )
+    else
+        delta_position, delta_rotation = pose_absolute(o, detected)
+    end
     return {
         id = o.id,
         yolo_classes = o.yolo_classes,
         ocr_values = o.ocr_values,
         is_anchor = o.is_anchor,
-        status = status,
+        status = outcome_from_deltas(delta_position, delta_rotation, thresholds),
         matched_label = detected.label,
         matched_confidence = detected.confidence,
         delta_position = delta_position,
@@ -430,7 +476,7 @@ local function validate_same_class(o, detections, thresholds, claimed)
         matched_y = detected.y,
         matched_width = detected.width,
         matched_height = detected.height,
-    }, detected._idx
+    }
 end
 
 local function mismatched_or_missing(o, detections, thresholds, claimed, expected_flat)
@@ -487,33 +533,78 @@ local function validation(input)
         table.insert(detections, tagged)
     end
 
-    -- Two passes:
-    --   1) Claim same-class matches (so neighbors don't steal each other).
-    --   2) Only then decide mismatched vs missing from *unclaimed* boxes.
+    -- Claim same-class matches first (so neighbors don't steal each other),
+    -- then score pose in the lock's frame when a lock is paired.
     -- A removed part next to a correctly matched sibling must be "missing",
     -- not "incorrect · wrong type" via the sibling's detection.
     local claimed = {}
-    local objects = {}
-    local pending = {} -- indices into `objects` still needing pass 2
+    local pairs = {}
     local matched = 0
 
     for _, o in ipairs(expected_flat) do
-        local result, used_idx = validate_same_class(o, detections, thresholds, claimed)
+        local det = nearest_match(o, detections, claimed)
+        if det then
+            claimed[det._idx] = true
+            table.insert(pairs, { object = o, detected = det })
+        end
+    end
+
+    local lock_frames = {}
+    for _, p in ipairs(pairs) do
+        if p.object.is_anchor then
+            table.insert(lock_frames, { expected = p.object, detected = p.detected })
+        end
+    end
+
+    local function lock_for(o)
+        if o.is_anchor then
+            for _, f in ipairs(lock_frames) do
+                if f.expected.id == o.id then
+                    return f
+                end
+            end
+            return nil
+        end
+        if #lock_frames == 0 then
+            return nil
+        end
+        local ox, oy = center(o)
+        local best, best_d = nil, math.huge
+        for _, f in ipairs(lock_frames) do
+            local lx, ly = center(f.expected)
+            local d = distance(ox, oy, lx, ly)
+            if d < best_d then
+                best, best_d = f, d
+            end
+        end
+        return best
+    end
+
+    local scored = {}
+    for _, p in ipairs(pairs) do
+        scored[p.object.id] = score_same_class(
+            p.object,
+            p.detected,
+            thresholds,
+            lock_for(p.object)
+        )
+    end
+
+    local objects = {}
+    local pending_slots = {}
+    for _, o in ipairs(expected_flat) do
+        local result = scored[o.id]
         if result then
             table.insert(objects, result)
-            if used_idx then
-                claimed[used_idx] = true
-            end
             if result.status == "matched" then
                 matched = matched + 1
             end
         else
-            table.insert(objects, false) -- placeholder
-            table.insert(pending, { index = #objects, object = o })
+            table.insert(objects, false)
+            table.insert(pending_slots, { index = #objects, object = o })
         end
     end
-
-    for _, p in ipairs(pending) do
+    for _, p in ipairs(pending_slots) do
         local result, used_idx = mismatched_or_missing(
             p.object,
             detections,

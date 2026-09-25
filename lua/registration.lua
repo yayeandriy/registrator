@@ -999,6 +999,14 @@ local function refine_with_scene(t0, anchor_matches, expected_flat, frames)
     if s1 < s0 * 0.4 or s1 > s0 * 2.5 then
         return t0
     end
+    -- Lock-quad (or richer) T already carries orientation from the
+    -- lock's points. A two-center refine can land the scene with
+    -- nearly-zero rotation and leave every AABB heading in camera
+    -- space — that heading is not the transform. Keep the point-fit
+    -- orientation.
+    if math.abs(wrap_deg(transform_rotation_deg(t1) - transform_rotation_deg(t0))) > 15.0 then
+        return t0
+    end
     local r0, r1 = 0.0, 0.0
     for _, m in ipairs(extra) do
         local ex, ey = center(m.expected)

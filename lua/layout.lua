@@ -10,6 +10,11 @@
 -- When `enabled` is false it returns `validation` unchanged so the host
 -- can leave the step in the chain and flip it off.
 --
+-- Pose uses the same lock-point frame as `validation.lua`. Assignment
+-- is global; scoring must not fall back to AABB heading vs the image
+-- axes — that number is not the transform registration built from the
+-- lock's points. The lock vs itself is the origin of that frame.
+--
 -- Input:
 --   {
 --     expected = { ... },
@@ -202,6 +207,96 @@ local function angle_diff_with_symmetry(a, b, symmetry)
     return diff
 end
 
+local function long_axis_heading(rot, w, h)
+    rot = type(rot) == "number" and rot or 0.0
+    w = type(w) == "number" and w or 0.0
+    h = type(h) == "number" and h or 0.0
+    if w >= h then
+        return rot
+    end
+    return rot + 90.0
+end
+
+local function wrap_signed_90(deg)
+    local a = deg % 180.0
+    if a > 90.0 then
+        a = a - 180.0
+    elseif a <= -90.0 then
+        a = a + 180.0
+    end
+    return a
+end
+
+local function registered_long_axis_heading(rot, w, h)
+    rot = type(rot) == "number" and rot or 0.0
+    w = type(w) == "number" and w or 0.0
+    h = type(h) == "number" and h or 0.0
+    local aspect = w / math.max(h, 1e-6)
+    if aspect < 1.2 and aspect > (1.0 / 1.2) then
+        return long_axis_heading(rot, w, h)
+    end
+    local tilt = wrap_signed_90(rot)
+    if w >= h then
+        if math.abs(tilt) <= 45.0 then
+            return tilt
+        end
+        return 0.0
+    end
+    if math.abs(tilt) > 45.0 then
+        return rot
+    end
+    return 90.0 + tilt
+end
+
+local function heading_of_expected(o)
+    return long_axis_heading(o.rotation or 0.0, o.width, o.height)
+end
+
+local function heading_of_detected(d)
+    if type(d.rotation) == "number" then
+        return registered_long_axis_heading(d.rotation, d.width, d.height)
+    end
+    return nil
+end
+
+-- Lock-point frame (same metric as validation.lua). AABB heading vs
+-- the image axes is not the transform; lock vs itself is the origin.
+local function pose_in_lock_frame(o, detected, lock_exp, lock_det)
+    local ox, oy = center(o)
+    local dx, dy = center(detected)
+    local lx, ly = center(lock_exp)
+    local mx, my = center(lock_det)
+    local delta_position = distance(ox - lx, oy - ly, dx - mx, dy - my)
+
+    local h_lock_e = heading_of_expected(lock_exp)
+    local h_lock_d = heading_of_detected(lock_det) or h_lock_e
+    local delta_rotation = nil
+    local h_d = heading_of_detected(detected)
+    if h_d ~= nil then
+        delta_rotation = angle_diff_with_symmetry(
+            h_d - h_lock_d,
+            heading_of_expected(o) - h_lock_e,
+            o.symmetry
+        )
+    end
+    return delta_position, delta_rotation
+end
+
+local function pose_absolute(o, detected)
+    local ex, ey = center(o)
+    local dx, dy = center(detected)
+    local delta_position = distance(ex, ey, dx, dy)
+    local delta_rotation = nil
+    if heading_of_detected(detected) ~= nil then
+        delta_rotation = angle_diff_with_symmetry(
+            heading_of_detected(detected),
+            heading_of_expected(o),
+            o.symmetry
+        )
+    end
+    return delta_position, delta_rotation
+end
+
 -- Kuhn–Munkres on a square cost matrix (1-based). Returns
 -- assignment[row] = col.
 local function hungarian_square(a, n)
@@ -306,16 +401,21 @@ local function pose_status(position_ok, rotation_ok)
     return "misrotated"
 end
 
-local function outcome_from_pair(o, detected, delta_position, thresholds)
-    local position_ok = delta_position <= thresholds.position
-    local delta_rotation = nil
-    local rotation_ok = true
-    if detected.rotation ~= nil and type(detected.rotation) == "number" then
-        delta_rotation = angle_diff_with_symmetry(
-            detected.rotation,
-            o.rotation or 0.0,
-            o.symmetry
+local function outcome_from_pair(o, detected, thresholds, lock_frame)
+    local delta_position, delta_rotation
+    if lock_frame then
+        delta_position, delta_rotation = pose_in_lock_frame(
+            o,
+            detected,
+            lock_frame.expected,
+            lock_frame.detected
         )
+    else
+        delta_position, delta_rotation = pose_absolute(o, detected)
+    end
+    local position_ok = delta_position <= thresholds.position
+    local rotation_ok = true
+    if delta_rotation ~= nil then
         rotation_ok = delta_rotation <= thresholds.rotation
     end
     return {
@@ -374,6 +474,7 @@ local function assign_layout(expected_flat, detections, thresholds)
     end
     local assignment = hungarian(cost, n, m)
     local claimed = {}
+    local pairs = {}
     local objects = {}
     local pending = {}
     for i, o in ipairs(expected_flat) do
@@ -381,11 +482,52 @@ local function assign_layout(expected_flat, detections, thresholds)
         if j and cost[i][j] < INF / 2 then
             local detected = detections[j]
             claimed[detected._idx] = true
-            table.insert(objects, outcome_from_pair(o, detected, cost[i][j], thresholds))
+            table.insert(pairs, { index = i, object = o, detected = detected })
+            table.insert(objects, false)
         else
             table.insert(objects, false)
             table.insert(pending, { index = #objects, object = o })
         end
+    end
+
+    local lock_frames = {}
+    for _, p in ipairs(pairs) do
+        if p.object.is_anchor then
+            table.insert(lock_frames, { expected = p.object, detected = p.detected })
+        end
+    end
+
+    local function lock_for(o)
+        if o.is_anchor then
+            for _, f in ipairs(lock_frames) do
+                if f.expected.id == o.id then
+                    return f
+                end
+            end
+            return nil
+        end
+        if #lock_frames == 0 then
+            return nil
+        end
+        local ox, oy = center(o)
+        local best, best_d = nil, math.huge
+        for _, f in ipairs(lock_frames) do
+            local lx, ly = center(f.expected)
+            local d = distance(ox, oy, lx, ly)
+            if d < best_d then
+                best, best_d = f, d
+            end
+        end
+        return best
+    end
+
+    for _, p in ipairs(pairs) do
+        objects[p.index] = outcome_from_pair(
+            p.object,
+            p.detected,
+            thresholds,
+            lock_for(p.object)
+        )
     end
     for _, p in ipairs(pending) do
         local wrong, dist = nearest_any_match(p.object, detections, claimed, expected_flat)
