@@ -64,6 +64,19 @@ Quads (`Detection.corners`, `expected_corners`) are always 4 of these, ordered c
 ```
 
 - `transform` is `null` when `error` is set (e.g. no anchor detected at all).
+
+### No anchor on camera — host contract
+
+`matched_anchors == 0` (so `transform == null`) means the board was never
+placed. Hosts must **not** feed that frame to `validation.lua` and report the
+result: every object would come back `missing` for want of a transform, which
+reads as a failed board rather than a board nobody has found yet.
+
+While a profile that expects an anchor has none matched, a host shows the
+anchor search ("Looking for object"), holds every other row and badge back,
+and — once the search runs out its completion period — ends the run with
+"Object not found" instead of a list of missing parts. A profile with no
+anchor to find (Presence-only) never waits.
 - `registered_detections[].rotation` is only non-`null` when the *original* detection carried a real `corners` quad.
 - `registered_detections[].kind` is copied through from the raw detection (`yolo` / `ocr` / `ocr:…`). Spatial extras skip unused OCR, same as Presence.
 
