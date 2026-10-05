@@ -244,6 +244,71 @@ local function distance(ax, ay, bx, by)
     return math.sqrt(dx * dx + dy * dy)
 end
 
+-- Two placements of the same class on the same box are one physical
+-- part. A single detection used to match the first and leave the copy
+-- "missing", painted on top of the part that was actually found.
+local function expectation_key(o)
+    local classes = {}
+    for _, c in ipairs(o.yolo_classes or {}) do
+        if non_empty(c) then
+            table.insert(classes, string.lower(trim(c)))
+        end
+    end
+    table.sort(classes)
+    if #classes > 0 then
+        return table.concat(classes, "\0")
+    end
+    local texts = {}
+    for _, t in ipairs(o.ocr_values or {}) do
+        if non_empty(t) then
+            table.insert(texts, string.lower(trim(t)))
+        end
+    end
+    table.sort(texts)
+    if #texts == 0 then
+        return ""
+    end
+    return "ocr\0" .. table.concat(texts, "\0")
+end
+
+local function same_stacked_part(a, b)
+    local key = expectation_key(a)
+    if key == "" or key ~= expectation_key(b) then
+        return false
+    end
+    local max_w = math.max(a.width or 0.0, b.width or 0.0, 1e-6)
+    local max_h = math.max(a.height or 0.0, b.height or 0.0, 1e-6)
+    if math.abs((a.width or 0.0) - (b.width or 0.0)) / max_w > 0.25 then
+        return false
+    end
+    if math.abs((a.height or 0.0) - (b.height or 0.0)) / max_h > 0.25 then
+        return false
+    end
+    local ax, ay = center(a)
+    local bx, by = center(b)
+    local diag = math.sqrt(max_w * max_w + max_h * max_h)
+    return distance(ax, ay, bx, by) <= diag * 0.2
+end
+
+local function collapse_stacked(flat)
+    local kept = {}
+    for _, o in ipairs(flat) do
+        local stack = nil
+        for i, prev in ipairs(kept) do
+            if same_stacked_part(prev, o) then
+                stack = i
+                break
+            end
+        end
+        if not stack then
+            table.insert(kept, o)
+        elseif o.is_anchor and not kept[stack].is_anchor then
+            kept[stack] = o
+        end
+    end
+    return kept
+end
+
 -- A rectangle looks identical rotated by 180°, so only the *minimal*
 -- difference within that period is meaningful — e.g. an object expected
 -- at 5° and detected at 183° is really only 2° off, not 178°.
@@ -518,7 +583,7 @@ local function validation(input)
         end
     end
 
-    local expected_flat = flatten(input.expected or {}, 0.0, 0.0, {})
+    local expected_flat = collapse_stacked(flatten(input.expected or {}, 0.0, 0.0, {}))
 
     -- Tag each detection with a stable index so claimed-detection index
     -- can be checked off below — a plain identity/reference check would
