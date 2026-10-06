@@ -14,6 +14,16 @@ local suites = {
     "test_accumulator.lua",
     "test_presence_validator.lua",
     "test_presence_latch.lua",
+    "test_zone.lua",
+    "test_live.lua",
+    "test_inspect_view.lua",
+    "test_prepare.lua",
+    "test_verdict.lua",
+    "test_session.lua",
+    "test_session_host.lua",
+    "test_session_view.lua",
+    "test_report.lua",
+    "test_report_catalog.lua",
 }
 
 local any_failed = false

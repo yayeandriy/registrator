@@ -1123,6 +1123,8 @@ local function register_detection(hinv, d)
         -- Presence/Spatial extras treat OCR separately from YOLO. Keep
         -- the producer kind so a Presence-only paper is not a Spatial extra.
         kind = d.kind,
+        class_id = d.class_id,
+        vision_model_id = d.vision_model_id,
     }
 end
 
@@ -1134,6 +1136,26 @@ local function register_all_detections(hinv, frames)
         end
     end
     return out
+end
+
+-- Apply a host-settled transform (live zone turn) using this file's
+-- register_detection — never a second copy of the inverse map.
+local function register_with_transform(input)
+    local t = input.transform
+    if type(t) ~= "table" then
+        return { registered_detections = {} }
+    end
+    local hinv = invert_3x3(transform_matrix(t))
+    if not hinv then
+        return { registered_detections = {} }
+    end
+    local frames = input.detections
+    if type(frames) ~= "table" then
+        frames = {}
+    elseif frames[1] and frames[1].label ~= nil and frames[1].detections == nil then
+        frames = { { detections = frames } }
+    end
+    return { registered_detections = register_all_detections(hinv, frames) }
 end
 
 -- Width-normalize a full-frame `[0,1]` box: `y' = y * (H/W)`. Square
@@ -1201,6 +1223,10 @@ local function camera_transform(t, aspect)
 end
 
 local function registration(input)
+    input = input or {}
+    if input.op == "register_with" then
+        return register_with_transform(input)
+    end
     local expected_flat = flatten(input.expected or {}, 0.0, 0.0, {})
     local aspect = tonumber(input.frame_aspect) or 1.0
     if aspect < 1e-6 then

@@ -8,8 +8,9 @@ Every algorithm here is written exactly once, in `lua/`, and is meant to run **b
 
 ## Contents
 
-- `lua/registration.lua`, `lua/validation.lua`, `lua/presence_validator.lua`, `lua/presence_latch.lua`, `lua/accumulator.lua` — the algorithms. Each file's own header comment is the authoritative spec; `SCHEMA.md` is a field-level index into them.
-- `lua/json.lua` — a small dependency-free JSON encode/decode, needed only by a host with no native Lua-table marshaling of its own (i.e. a plain C Lua VM driven over the `lua_State*` API, like the Swift host) — `mlua`'s serde bridge on the Rust side has no use for this file at all.
+- `lua/registration.lua`, `lua/validation.lua`, `lua/presence_validator.lua`, `lua/presence_latch.lua`, `lua/accumulator.lua`, `lua/zone.lua`, `lua/live.lua` (`live_strip.lua` / `live_spatial.lua` / `live_window.lua` / `live_zoned.lua`), `lua/inspect_view.lua`, `lua/prepare.lua` — the algorithms. Each file's own header comment is the authoritative spec; `SCHEMA.md` is a field-level index into them.
+- `lua/verdict.lua`, `lua/ocr_window.lua`, `lua/session.lua`, `lua/session_zones.lua`, dispatched by `lua/session_host.lua` — the live-session policy (shown verdict, OCR settle, zone latch, settle gate, completion, next still, anchor search, router completion). Clients only keep the counters these ops return and paint the answer.
+- `lua/json.lua` — a small dependency-free JSON encode/decode for hosts with no native Lua-table marshaling (the Swift host), and the JSON-text boundary of `session_host.lua`, which both hosts call the same way.
 - `tests/` — a pure-Lua test suite (no Rust/Swift toolchain needed) exercising all three scripts across the same JSON-string boundary a real Swift host would use. Run with:
 
   ```bash
@@ -25,8 +26,12 @@ git submodule add https://github.com/yayeandriy/registrator.git <path>
 git submodule update --init --recursive
 ```
 
-- `inventor-api`: `crates/registrator/src/{registration,validation,accumulator}.rs` each `include_str!` their script straight out of the submodule.
-- `inventor-ios`: the `Registrator` Swift package's Lua harness loads each script (and `json.lua`) as a bundled resource out of the submodule.
+- `inventor-api`: `crates/registrator/src/*.rs` `include_str!` the scripts straight out of the submodule — one script per wrapper through `exec.rs`, and the session ops composed in `session.rs` (`run_session_op`). The desktop app (Tauri) links the same crate.
+- `inventor-ios`: the `Registrator` Swift package bundles a synced copy of `lua/` (`Vendor/registrator-lua`) and composes `session_host.lua` the same way in `SessionOps.swift`. The monorepo's `scripts/check-lua-parity` fails when that copy drifts.
+
+## The rule
+
+Business logic — status, scores, matching, holds, completion, extras, view and profile choice — is written here once. Hosts gather facts, call an op, keep the state it returns, and render; they never re-implement a rule. Adding or changing an op: see the `lua-engine-op` skill in the Inventor monorepo (`.cursor/skills/lua-engine-op/SKILL.md`).
 
 ## Making a change
 

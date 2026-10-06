@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`, `zone.lua`, `live.lua`, `inspect_view.lua`, `prepare.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -328,3 +328,106 @@ Presence / Spatial text match — not registration. Expected text is matched whe
 **Input:** `{ "hay": "…", "needle": "…" }` or `{ "found": ["A","B","C"], "expected": "Abc" }`
 
 **Output:** `{ "matched": true, "index": 1, "from": 1, "to": 1 }` or a `from`/`to` span for concat hits.
+
+## `zone.lua`
+
+Board-space zone membership. Helpers also live on the returned table (`zone.point_in_zone`, `zone.filter_keep`, …).
+
+**Input:** `{ "op": "polygon_in_frame"|"point_in_zone"|"box_inside_zone"|"flatten_abs"|"usable_zones"|"zone_member_ids"|"filter_keep"|"with_sole_anchor"|"hits", ... }`
+
+**Output:** `{ "ok": true }` / `{ "boxes": [...] }` / `{ "members": [["id", ...], ...] }` / `{ "objects": [ /* ReferenceObject[] */ ] }` / `{ "hits": [{ "id", "zones": ["object_id", ...] }] }` depending on `op`.
+
+`hits { objects, zones }` — per placement (nested ones in board space), every usable zone whose polygon holds its whole box; a box in several zones lists each. Placements in no zone are left out. This is the `zone_hits` input of `report.build`.
+
+Frame slack is `0.02`. Exclusive assignment: each placement belongs to the smallest containing zone; a tip always belongs to its own zone.
+
+## `live.lua`
+
+iOS `RegistratorRunner.process`. Host concatenates libraries as locals (`class_match`, `normalisator`, `matcher`, `registration`, `validation`, `layout`, `ruller`, `presence_validator`, `accumulator`, `zone`) plus `live_strip.lua` / `live_spatial.lua` / `live_window.lua` / `live_zoned.lua` / `live.lua`. `register_with` calls `registration.lua` with `{ "op": "register_with", "transform", "detections" }` — not a second inverse map.
+
+**Input (inspect):**
+
+```json
+{
+  "expected": [ /* ReferenceObject[] */ ],
+  "frames": [ { "t": 0.0, "detections": [ /* Detection */ ] } ],
+  "presence": true,
+  "spatial": true,
+  "layout": true,
+  "frame_aspect": 1.0,
+  "accumulator_thresholds": { "iou": 0.2, "min_presence_ratio": 0.25 },
+  "validation_thresholds": { "position": 8.0, "rotation": 30.0 },
+  "presence_overlay": [ /* PresenceDetection */ ],
+  "catalog": [ { "id": "<uuid>", "name": "Screw", "yolo_classes": ["screw"] } ],
+  "zones": [ { "object_id": "<uuid>", "points": [ { "x": 0, "y": 0 } ] } ],
+  "completed_zone_ids": []
+}
+```
+
+**Output:** `{ "presence", "spatial", "transform", "zone_transforms": [["<id>", { "tx", "ty", "a", "b", "c", "d", "px", "py" }]], "visible_zones": [{ "object_id", "member_ids" }], "anchor": "not_required"|"searching"|"found" }`. `searching` carries no rows.
+
+Other ops: `{ "op": "transform_agrees", "a", "b" }` → `{ "agrees" }`; `{ "op": "consensus_transform", "transforms" }` → `{ "transform" }`; `{ "op": "fill", "accumulated", "frames" }` → `{ "detections" }` (`registered_for_spatial_validation`).
+
+## `inspect_view.lua`
+
+Settle which ProfileView to score.
+
+**Input:** `{ "op": "settle"|"scope"|"keep_detection"|"unique_anchor_classes"|"collect_anchors"|"view_model_ids"|"view_class_ids", "objects", "detections": [{ "label", "confidence", "class_id", "vision_model_id" }], "latched", "completed" }`
+
+**Output:** `{ "view_id" }` / `{ "objects", "view_id", "awaiting_view" }` / `{ "keep" }` / `{ "map" }` / `{ "ids" }`.
+
+**`filter_detections`** — which detections the scoped view keeps, one call per batch.
+
+**Input:** `{ "op": "filter_detections", "objects"?, "view_class_ids"?, "view_models"?, "catalog_keys": ["<class label>"], "detections": [{ "kind", "label", "class_id"?, "vision_model_id"? }] }`. Without `view_class_ids` / `view_models` the refs come from `objects`.
+
+**Output:** `{ "keep": [bool] }`, one flag per detection in order. Kept: everything when the view has no class or model refs; OCR; a stamped class on the view; an unstamped box from a view model; any label whose class key (trimmed, lowercase, whitespace → `_`) is in `catalog_keys`, so an unplaced profile component can fail as an extra.
+
+## `prepare.lua`
+
+`spatial_branch` (drop presence-only, promote children) and `ensure_spatial_anchor` (largest spatial object if none is a tip).
+
+**Input:** `{ "op": "spatial_branch"|"ensure_spatial_anchor"|"prepare", "objects": [ /* ReferenceObject[] */ ] }`
+
+**Output:** `{ "objects": [ /* ReferenceObject[] */ ] }`.
+
+## Session ops — `session_host.lua`
+
+Every live-session decision a client used to make: the verdict it shows, OCR settle, zone latch, the settle gate, completion, the next still, the anchor search and router completion. Hosts concatenate `json`, `normalisator`, `ocr_window`, `inspect_view`, `verdict`, `session`, `session_zones`, `session_extras`, `session_view`, `report_rules`, `report_catalog`, `report_zones`, `report` as locals in that order, then `session_host.lua` (Rust: `registrator::run_session_op`; desktop: Tauri `session_op`; iOS: `SessionOps`). Clients keep the counters each op hands back and paint the answer; they decide nothing.
+
+**Input (JSON text):** `{ "module": "verdict"|"session"|"zones"|"ocr"|"extras"|"view"|"report", "op": "<name>", "args": { ... } }`. `null` reads as absent.
+
+**Output (JSON text):** the op's result table. Empty tables encode as `[]`.
+
+`Verdict` = `{ result: "pass"|"fail"|"pending"|"scoring", matched, total, incorrect, missing, extra, complete, no_expectations, rows: [{ object_id?, label, status, confidence?, matched_label?, delta_position?, delta_rotation?, match_kind? }] }`. `complete` is counts only; `pass` also needs `incorrect == 0`.
+
+| op | args | result |
+|----|------|--------|
+| `verdict.from_presence` | `presence` (Presence result) | `{ verdict }` |
+| `verdict.from_spatial` | `spatial` (Validation result), `hold` | `{ verdict, objects, hold }` — a matched row survives one soft fail |
+| `verdict.merge` | `presence?`, `spatial?`, `ocr_labels`, `needles`, `ocr` (`ocr.progress` args minus rows/needles) | `{ verdict, ocr }` — union by status rank, OCR extras out, unsettled text misses `pending` |
+| `ocr.progress` | `wants_ocr`, `engine_off`, `backend_ran`, `rows`, `needles`, `read_labels`, `box_ticks`, `empty_ticks` | `{ ready, tick_finished, has_match, reads_expected, read_hits, box_ticks, empty_ticks }` |
+| `ocr.drop_stale` | `frames`, `live_labels`, `needles`, `ocr_ticked` | `{ frames }` |
+| `zones.latch` | `holds`, `visible`, `verdict` | `{ holds: [{ object_id, pass, rows }] }` |
+| `zones.compose` | `zone_ids`, `live`, `holds`, `visible` | `{ verdict, zones: [{ object_id, matched, total, pending }] }` |
+| `session.settle` | `verdict`, `published`, `candidate`, `hits`, `dirty`, `readings` | `{ publish, candidate, hits, fingerprint }` |
+| `session.completion` | `verdict`, `zoned`, `zone_holds`, `zone_count`, `multi_view`, `view_done`, `views_left`, `done_results`, `ticks_on_view`, `fail_ticks`, `window_frames`, `fail_frames`, `tick_ms` | `{ action: "none"|"view"|"finish", result?, view_result?, fail_ticks }` |
+| `session.next_view` | `proposals`, `proposal`, `window_frames`, `tick_ms` | `{ proposals, adopt? }` |
+| `session.anchor_search` | `ticks`, `fail_frames`, `tick_ms` | `{ ticks, missing }` |
+| `session.router_completion` | `ready`, `any_value`, `fail_ticks`, `fail_frames`, `tick_ms` | `{ result?, fail_ticks }` |
+| `session.ticks_for_frames` | `frames`, `tick_ms` | `{ ticks }` — phone frames (12 fps) as ticks, never under two |
+| `session.stop` | `verdict?` | `{ result }` — a manual stop passes only on a complete pass |
+| `session.overall` | `run?`, `view_results` | `{ result }` — completion's run wins, else fail when any view failed |
+| `extras.sticky` | `latched: [{ detection, misses }]`, `current` (registered extras) | `{ latched, detections }` — same-class IoU ≥ 0.2 clusters to the most confident box; a prior follows its IoU match, survives 3 misses, and drops once its class has current extras |
+| `view.settle` | `objects`, `detections`, `latched?`, `completed` | `{ settled, view_id? }` — `inspect_view` settle over placement views |
+| `view.scope` | `objects`, `view_id?`, `completed` | `{ ids, anchors_only }` — the settled view's roots; one view keeps all; else the open views' tips |
+| `view.frame` | `objects`, `view_id?`, `completed`, `catalog_keys`, `detections: [{ kind, label, vision_model_id? }]` | `{ class_ids, keep }` — per detection: class id by (label, model) on the view (`""` none) and `inspect_view` `filter_detections` against the view's tree, the open tips while waiting, or all with one view |
+| `report.build` | `anchor_searching`, `expected`, `profile_objects?`, `anchor_count`, `presence?`, `spatial?`, `validation_objects` (or `verdict_rows`: the settled verdict's rows, mapped one per placement with unsettled rows as `missing`), `names: [{ id, name }]`, `ocr_labels`, `ocr_detections`, `catalog: [{ id, display_name, yolo_classes, ocr_values }]`, `zones: [{ object_id, hex? }]`, `zone_hits: [{ id, zones }]` | `{ entries, sections, awaiting_anchor, no_expectations, no_anchor }` |
+| `report.placeholder` | `expected`, `presence`, `spatial` | `{ kind: "presence"|"spatial"|"none", presence?, spatial? }` — all-missing rows before the first live result |
+| `report.no_anchor` | `objects`, `anchor_count` | `{ no_anchor }` — Spatial is on but nothing can anchor |
+
+`ReportEntry` = `{ id, name, bucket: "ok"|"missed"|"incorrect_object"|"misplaced"|"extra"|"incorrect_values", mismatches: [{ expected, seen?, delta_mm?, delta_deg? }], routine?: "presence"|"spatial"|"both", confidence?, matched_label?, zone_owner?, zone_hex?, is_zone_tip }`. `report.build` merges Presence and Spatial rows (a shared id keeps the Spatial outcome), adds missing text rows and catalog-named extras, promotes overlay failures, then splits rows by zone. `sections` = `[{ id, zone, hex?, entries }]` — `entries` are 1-based indexes into `entries`, zones first, then `other` and `extra`.
+
+## `registration.lua` `register_with`
+
+`{ "op": "register_with", "transform": { "tx", "ty", "a", "b", "c", "d", "px", "py" }, "detections": [ /* Detection or Frame[] */ ] }` → `{ "registered_detections": [ /* same as a registration run */ ] }`. Uses this file's `register_detection`.
+
