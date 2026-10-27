@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`, `zone.lua`, `live.lua`, `inspect_view.lua`, `prepare.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`, `zone.lua`, `live.lua`, `inspect_view.lua`, `prepare.lua`, `kit.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -389,6 +389,18 @@ Settle which ProfileView to score.
 **Input:** `{ "op": "spatial_branch"|"ensure_spatial_anchor"|"prepare", "objects": [ /* ReferenceObject[] */ ] }`
 
 **Output:** `{ "objects": [ /* ReferenceObject[] */ ] }`.
+
+## `kit.lua`
+
+A profile's placements, the project's components and the class catalog, turned into live scoring inputs. Hosts call it whenever the profile, its components or a threshold draft change, not per detection.
+
+**Input:** `{ "objects": [placement], "components": [component], "classes": [class], "profile_id": "uuid", "draft": { "component_id", "thresholds": { "distance"?, "rotation"? } }? }`. A placement is the API's `ReferenceObjectDto` (`id`, `profile_view_id`, `name`, `component_ids`, `routines`, `x`, `y`, `width`, `height`, `rotation`, `is_anchor`, `loose_match`, `children`); a component is `ComponentDto` (`id`, `inspection_profile_id`, `name`, `class_ids`, `text_values`, `symmetry`, `thresholds`); a class is `ClassDto` (`id`, `label`, `vision_model_id`). Nulls read as empty.
+
+**Output:**
+- `expected`: one object per placement, children nested, with the placement geometry plus `yolo_classes` (labels of the linked classes, once each; a part with no class and no text uses the class whose label matches its name, else the name; a text-only part gets none), `yolo_class_refs` (`class_id`, `label`, `vision_model_id`), `ocr_values` (trimmed text, without blanks and unfilled formulas starting `=` or holding `{`), `vision_model_id` (first linked class with one), `symmetry` (first linked component's, else `"inf"`), `thresholds` (the draft for its component, else the first linked component's; omitted when unset).
+- `catalog`: components of this profile or of none, that have a class label or a text: `id`, `name`, `yolo_classes`, `ocr_values` (every non-blank text).
+- `needles`: every `expected` OCR value once, in tree order.
+- `presence`: some placement asks for `presence_validate`. `spatial`: some placement asks for `spatial_validate`, or the profile has placements and asks for neither.
 
 ## Session ops — `session_host.lua`
 

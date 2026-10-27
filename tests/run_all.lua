@@ -18,6 +18,7 @@ local suites = {
     "test_live.lua",
     "test_inspect_view.lua",
     "test_prepare.lua",
+    "test_kit.lua",
     "test_verdict.lua",
     "test_session.lua",
     "test_session_host.lua",
