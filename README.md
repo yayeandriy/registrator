@@ -1,6 +1,6 @@
 # registrator
 
-The registration → accumulation → validation Lua algorithm library shared between [`inventor-api`](https://github.com/yayeandriy/inventor-api) (Rust, via [`mlua`](https://github.com/mlua-rs/mlua)) and [`inventor-ios`](https://github.com/yayeandriy/inventor-ios) (Swift, via a native embedded Lua 5.4 host) — see `SCHEMA.md` for the exact JSON shape each script takes and returns.
+The registration → accumulation → validation Lua algorithm library shared between [`inventor-api`](https://github.com/yayeandriy/inventor-api) (Rust, via [`mlua`](https://github.com/mlua-rs/mlua)) and [`inventor-apple`](https://github.com/yayeandriy/inventor-apple) (Swift, via a native embedded Lua 5.4 host) — see `SCHEMA.md` for the exact JSON shape each script takes and returns.
 
 ## Why a separate repo
 
@@ -19,7 +19,7 @@ Every algorithm here is written exactly once, in `lua/`, and is meant to run **b
 
 ## Consuming this repo
 
-Both `inventor-api` and `inventor-ios` add this repo as a **git submodule** and read straight out of the checkout — there's no build step, package registry, or versioning scheme here beyond git commits:
+Both `inventor-api` and `inventor-apple` add this repo as a **git submodule** and read straight out of the checkout — there's no build step, package registry, or versioning scheme here beyond git commits:
 
 ```bash
 git submodule add https://github.com/yayeandriy/registrator.git <path>
@@ -27,7 +27,7 @@ git submodule update --init --recursive
 ```
 
 - `inventor-api`: `crates/registrator/src/*.rs` `include_str!` the scripts straight out of the submodule — one script per wrapper through `exec.rs`, and the session ops composed in `session.rs` (`run_session_op`). The desktop app (Tauri) links the same crate.
-- `inventor-ios`: the `Registrator` Swift package bundles a synced copy of `lua/` (`Vendor/registrator-lua`) and composes `session_host.lua` the same way in `SessionOps.swift`. The monorepo's `scripts/check-lua-parity` fails when that copy drifts.
+- `inventor-apple`: the `Registrator` Swift package bundles a synced copy of `lua/` (`Vendor/registrator-lua`) and composes `session_host.lua` the same way in `SessionOps.swift`. The monorepo's `scripts/check-lua-parity` fails when that copy drifts.
 
 ## The rule
 
@@ -35,4 +35,4 @@ Business logic — status, scores, matching, holds, completion, extras, view and
 
 ## Making a change
 
-Since both hosts execute these files verbatim, any behavior change here needs both consuming repos' own test suites re-run against the new commit (`cargo test -p registrator` in `inventor-api`; `swift test` in `inventor-ios`'s `Registrator` package) before bumping the submodule pointer in either — this repo's own `tests/run_all.lua` is necessary but not sufficient proof a change is safe.
+Since both hosts execute these files verbatim, any behavior change here needs both consuming repos' own test suites re-run against the new commit (`cargo test -p registrator` in `inventor-api`; `swift test` in `inventor-apple`'s `Registrator` package) before bumping the submodule pointer in either — this repo's own `tests/run_all.lua` is necessary but not sufficient proof a change is safe.
