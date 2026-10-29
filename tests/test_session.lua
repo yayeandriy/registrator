@@ -65,6 +65,28 @@ t.eq(zoned.action, "none", "zoned waits for every zone")
 local zoned_done = session.completion({ zoned = true, zone_count = 2, zone_holds = { true, false } })
 t.eq(zoned_done.result, "fail", "one failed zone fails")
 
+-- Await mode: only the operator ends the still.
+local held = tick({ verdict = verdict("pass", true), await = true })
+t.eq(held.action, "none", "an awaiting still holds a complete pass")
+local held_miss = tick({ verdict = verdict("fail", false), await = true, fail_ticks = 40 })
+t.eq(held_miss.action, "none", "an awaiting still never fails on its own")
+t.eq(held_miss.fail_ticks, 40, "an awaiting still counts no misses")
+local finished = tick({ verdict = verdict("pass", true), await = true, finish = true })
+t.eq(finished.action, "finish", "finish ends an awaiting still")
+t.eq(finished.result, "pass", "a complete pass finishes as pass")
+local finished_short = tick({ verdict = verdict("pass", false), await = true, finish = true })
+t.eq(finished_short.result, "fail", "an incomplete still finishes as fail")
+local finished_empty = tick({ verdict = { result = "pending", total = 0, view_id = "v1" }, finish = true })
+t.eq(finished_empty.result, "fail", "finishing with nothing scored fails")
+local handed = tick({ verdict = verdict("pass", true), multi_view = true, views_left = 1, await = true, finish = true })
+t.eq(handed.action, "view", "finishing an awaiting still hands over to the next")
+local unsettled = tick({ verdict = { result = "pass", complete = true, total = 1, view_id = "" }, multi_view = true, finish = true })
+t.eq(unsettled.action, "none", "finish waits for a settled still")
+local zone_wait = session.completion({ zoned = true, zone_count = 1, zone_holds = { true }, await = true })
+t.eq(zone_wait.action, "none", "awaiting zones hold every zone")
+local zone_finish = session.completion({ zoned = true, zone_count = 2, zone_holds = { true }, await = true, finish = true })
+t.eq(zone_finish.result, "fail", "finishing before every zone holds fails")
+
 -- Settle gate.
 local v = { result = "pass", matched = 1, incorrect = 0, missing = 0, extra = 0, zone_chips = {} }
 local read = { ocr_done = true }

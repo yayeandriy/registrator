@@ -422,7 +422,7 @@ Every live-session decision a client used to make: the verdict it shows, OCR set
 | `zones.latch` | `holds`, `visible`, `verdict` | `{ holds: [{ object_id, pass, rows }] }` |
 | `zones.compose` | `zone_ids`, `live`, `holds`, `visible` | `{ verdict, zones: [{ object_id, matched, total, pending }] }` |
 | `session.settle` | `verdict`, `published`, `candidate`, `hits`, `dirty`, `readings` | `{ publish, candidate, hits, fingerprint }` |
-| `session.completion` | `verdict`, `zoned`, `zone_holds`, `zone_count`, `multi_view`, `view_done`, `views_left`, `done_results`, `ticks_on_view`, `fail_ticks`, `window_frames`, `fail_frames`, `tick_ms` | `{ action: "none"|"view"|"finish", result?, view_result?, fail_ticks }` |
+| `session.completion` | `verdict`, `zoned`, `zone_holds`, `zone_count`, `multi_view`, `view_done`, `views_left`, `done_results`, `ticks_on_view`, `fail_ticks`, `window_frames`, `fail_frames`, `tick_ms`, `await?`, `finish?` | `{ action: "none"|"view"|"finish", result?, view_result?, fail_ticks }` — `await` (the still's view is in await mode) never ends the still; `finish` (the operator pressed Finish) ends it now with the `stop` result |
 | `session.next_view` | `proposals`, `proposal`, `window_frames`, `tick_ms` | `{ proposals, adopt? }` |
 | `session.anchor_search` | `ticks`, `fail_frames`, `tick_ms` | `{ ticks, missing }` |
 | `session.router_completion` | `ready`, `any_value`, `fail_ticks`, `fail_frames`, `tick_ms` | `{ result?, fail_ticks }` |

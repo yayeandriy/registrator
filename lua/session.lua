@@ -8,8 +8,11 @@
 --
 --   completion  { verdict, zoned, zone_holds = { bool }, zone_count,
 --                 multi_view, view_done, views_left, done_results = { "pass"|"fail" },
---                 ticks_on_view, fail_ticks, window_frames, fail_frames, tick_ms }
+--                 ticks_on_view, fail_ticks, window_frames, fail_frames, tick_ms,
+--                 await?, finish? }
 --     -> { action = "none"|"view"|"finish", result?, fail_ticks }
+--     `await`: the still on screen ends only when the operator finishes it;
+--     `finish`: the operator did — it ends now with the `stop` result.
 --   next_view   { proposals = { "<id>"|"" }, proposal, window_frames, tick_ms }
 --     -> { proposals, adopt? }
 --   settle      { verdict, published, candidate, hits, dirty,
@@ -154,34 +157,45 @@ end
 function session.completion(input)
     local v = input.verdict or {}
     local fail_ticks = input.fail_ticks or 0
+    local finish = input.finish == true
+    local waiting = input.await == true and not finish
+    local none = { action = "none", fail_ticks = fail_ticks }
     if input.zoned then
         local holds = input.zone_holds or {}
-        if #holds < (input.zone_count or 0) then
-            return { action = "none", fail_ticks = fail_ticks }
+        if waiting or (#holds < (input.zone_count or 0) and not finish) then
+            return none
         end
-        local all = true
+        local all = #holds >= (input.zone_count or 0)
         for _, pass in ipairs(holds) do
             all = all and pass
         end
         return { action = "finish", result = all and "pass" or "fail", fail_ticks = fail_ticks }
     end
-    if v.awaiting_view or v.no_expectations or (v.total or 0) == 0 then
-        return { action = "none", fail_ticks = fail_ticks }
+    if v.awaiting_view or waiting then
+        return none
+    end
+    if not finish and (v.no_expectations or (v.total or 0) == 0) then
+        return none
     end
     if input.multi_view and (trim(v.view_id) == "" or input.view_done) then
-        return { action = "none", fail_ticks = fail_ticks }
+        return none
     end
-    local complete_pass = v.result == "pass" and v.complete == true
-    fail_ticks = complete_pass and 0 or fail_ticks + 1
-    local result = sample({
-        complete_pass = complete_pass,
-        has_extras = (v.extra or 0) > 0,
-        multi_view = input.multi_view,
-        ticks_on_view = input.ticks_on_view or 0,
-        settle_ticks = session.ticks(math.max(input.window_frames or 0, MIN_WINDOW_FRAMES), input.tick_ms),
-        fail_ticks = fail_ticks,
-        fail_grace = session.ticks(math.max(1, input.fail_frames or 1), input.tick_ms),
-    })
+    local result
+    if finish then
+        result = session.stop({ verdict = v }).result
+    else
+        local complete_pass = v.result == "pass" and v.complete == true
+        fail_ticks = complete_pass and 0 or fail_ticks + 1
+        result = sample({
+            complete_pass = complete_pass,
+            has_extras = (v.extra or 0) > 0,
+            multi_view = input.multi_view,
+            ticks_on_view = input.ticks_on_view or 0,
+            settle_ticks = session.ticks(math.max(input.window_frames or 0, MIN_WINDOW_FRAMES), input.tick_ms),
+            fail_ticks = fail_ticks,
+            fail_grace = session.ticks(math.max(1, input.fail_frames or 1), input.tick_ms),
+        })
+    end
     if result == nil then
         return { action = "none", fail_ticks = fail_ticks }
     end
