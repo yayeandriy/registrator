@@ -32,6 +32,13 @@ t.eq(done.action, "finish", "completion over JSON")
 local empty = host(json.encode({ module = "zones", op = "latch", args = { holds = {}, visible = {} } }))
 t.eq(empty, '{"holds":[]}', "empty arrays encode as arrays")
 
+local placed = call("populate", "place", {
+    detections = { { label = "pin", confidence = 0.9, x = 0, y = 0, width = 4, height = 4, kind = "yolo" } },
+    components = {},
+    classes = {},
+})
+t.eq(placed.placements[1].new, 1, "populate over JSON")
+
 local ok = pcall(host, json.encode({ module = "nope", op = "x" }))
 t.eq(ok, false, "unknown module raises")
 

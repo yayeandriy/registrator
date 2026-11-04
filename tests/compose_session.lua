@@ -22,6 +22,7 @@ local LIBS = {
     { "report_catalog", "report_catalog.lua" },
     { "report_zones", "report_zones.lua" },
     { "report", "report.lua" },
+    { "populate", "populate.lua" },
 }
 
 return function(lua_dir)
