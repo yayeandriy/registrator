@@ -85,4 +85,34 @@ t.eq(again.duplicates, 1, "a box over its component's placement is a duplicate")
 t.eq(#again.placements, 1, "only the new box is placed")
 t.eq(again.placements[1].x, 60, "another component's box at the spot does not count")
 
+-- With `only`, boxes go to those components alone, by class or text.
+local chosen = populate.place({
+    detections = {
+        box("pin", 0, 0, 10, 10),
+        box("cap", 50, 0, 10, 10),
+        box("cap", 80, 0, 10, 10, { label = "0900", kind = "ocr" }),
+    },
+    components = {
+        { id = "k1", name = "Pin", class_ids = { "c-pin" }, text_values = {} },
+        { id = "k2", name = "cap", class_ids = { "c-cap" }, text_values = {} },
+        { id = "k3", name = "Serial", class_ids = {}, text_values = { "0900" } },
+    },
+    classes = classes,
+    only = { "k1", "k3" },
+})
+t.eq(#chosen.placements, 2, "only the chosen components are placed")
+t.eq(chosen.placements[1].component_id, "k1", "a chosen component takes its class")
+t.eq(chosen.placements[2].component_id, "k3", "and a chosen one its text")
+t.eq(#chosen.new_components, 0, "nothing new is made")
+t.eq(chosen.outside, 1, "a box of another component is outside")
+
+local unnamed = populate.place({
+    detections = { box("cap", 0, 0, 10, 10) },
+    components = { { id = "k9", name = "CAP", class_ids = {}, text_values = {} } },
+    classes = classes,
+    only = { "k9" },
+})
+t.eq(#unnamed.placements, 0, "a name alone does not count with only")
+t.eq(unnamed.outside, 1, "the box is outside")
+
 if not t.summary("populate") then os.exit(1) end

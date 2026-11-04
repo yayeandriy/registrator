@@ -6,12 +6,14 @@
 --     components = { { id, name, class_ids, text_values } },
 --     classes    = { { id, label } },     -- the view model's classes
 --     placed     = { { component_id, x, y, width, height } } | nil,  -- on the view already
+--     only       = { component_id } | nil,  -- place into these alone
 --     iou        = 0.5 | nil,
 --   } -> {
 --     placements     = { { component_id? , new?, x, y, width, height, rotation } },
 --     new_components = { { name, class_ids, text_values, width, height } },
 --     skipped        = <boxes with no label>,
 --     duplicates     = <boxes already placed>,
+--     outside        = <boxes none of `only` is>,
 --   }
 --
 -- Boxes are in board units. Overlapping class boxes collapse to the most
@@ -23,6 +25,9 @@
 -- catalog component by `component_id` or a new one by `new` (its index in
 -- `new_components`). A box of a catalog component that overlaps one of that
 -- component's `placed` boxes by `iou` or more is already placed and dropped.
+-- With `only`, a box goes to the first of those components whose texts hold
+-- its text, else the first linked to its class; nothing is made, names do
+-- not count, and a box none of them is counts as `outside`.
 
 local populate = {}
 
@@ -135,10 +140,37 @@ local function find_component(components, text, class, name)
     return nil
 end
 
+local function find_only(components, only, text, class)
+    local chosen = {}
+    for _, c in ipairs(components) do
+        if contains(only, c.id) then
+            chosen[#chosen + 1] = c
+        end
+    end
+    if text ~= "" then
+        for _, c in ipairs(chosen) do
+            for _, t in ipairs(c.text_values or {}) do
+                if key(t) == key(text) then
+                    return c
+                end
+            end
+        end
+    end
+    if class ~= nil then
+        for _, c in ipairs(chosen) do
+            if contains(c.class_ids, class.id) then
+                return c
+            end
+        end
+    end
+    return nil
+end
+
 function populate.place(input)
     local threshold = tonumber(input.iou) or DEFAULT_IOU
     local found, texts = {}, {}
-    local skipped, duplicates = 0, 0
+    local skipped, duplicates, outside = 0, 0, 0
+    local only = input.only
     for _, d in ipairs(input.detections or {}) do
         if trim(d.label) == "" then
             skipped = skipped + 1
@@ -177,8 +209,16 @@ function populate.place(input)
             height = d.height,
             rotation = d.rotation or 0,
         }
-        local existing = find_component(components, text, class, name)
-        if existing ~= nil then
+        local existing
+        if only ~= nil then
+            existing = find_only(components, only, text, class)
+        else
+            existing = find_component(components, text, class, name)
+        end
+        if existing == nil and only ~= nil then
+            outside = outside + 1
+            placement = nil
+        elseif existing ~= nil then
             if already_placed(input.placed, existing.id, placement, threshold) then
                 duplicates = duplicates + 1
                 placement = nil
@@ -210,6 +250,7 @@ function populate.place(input)
         new_components = fresh,
         skipped = skipped,
         duplicates = duplicates,
+        outside = outside,
     }
 end
 
