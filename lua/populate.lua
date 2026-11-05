@@ -6,14 +6,19 @@
 --     components = { { id, name, class_ids, text_values } },
 --     classes    = { { id, label } },     -- the view model's classes
 --     placed     = { { component_id, x, y, width, height } } | nil,  -- on the view already
+--     counted    = { component_id } | nil,  -- with Presence on the view
 --     only       = { component_id } | nil,  -- place into these alone
+--     reads      = "yolo"|"ocr"|"all" | nil, -- which boxes count; nil = all
+--     kind       = "spatial"|"presence" | nil, -- what a box becomes; nil = spatial
 --     iou        = 0.5 | nil,
 --   } -> {
 --     placements     = { { component_id? , new?, x, y, width, height, rotation } },
+--     counts         = { { component_id?, new?, count } },  -- kind = "presence"
 --     new_components = { { name, class_ids, text_values, width, height } },
 --     skipped        = <boxes with no label>,
 --     duplicates     = <boxes already placed>,
 --     outside        = <boxes none of `only` is>,
+--     conflicts      = <boxes of components the view holds the other way>,
 --   }
 --
 -- Boxes are in board units. Overlapping class boxes collapse to the most
@@ -28,6 +33,12 @@
 -- With `only`, a box goes to the first of those components whose texts hold
 -- its text, else the first linked to its class; nothing is made, names do
 -- not count, and a box none of them is counts as `outside`.
+-- `reads = "yolo"` drops the text boxes (no box takes a text); `"ocr"`
+-- drops the class boxes. A component is placed by Spatial boxes or counted
+-- by Presence on a view, not both: Spatial skips the boxes of `counted`
+-- components, Presence those of components with `placed` boxes, each as a
+-- conflict. Presence makes no placements; each component's boxes become
+-- its count, in the order first found.
 
 local populate = {}
 
@@ -171,14 +182,37 @@ function populate.place(input)
     local found, texts = {}, {}
     local skipped, duplicates, outside = 0, 0, 0
     local only = input.only
+    local reads = input.reads or "all"
+    local presence = input.kind == "presence"
     for _, d in ipairs(input.detections or {}) do
-        if trim(d.label) == "" then
+        local ocr = d.kind == "ocr"
+        if (ocr and reads == "yolo") or (not ocr and reads == "ocr") then
+            -- not read
+        elseif trim(d.label) == "" then
             skipped = skipped + 1
-        elseif d.kind == "ocr" then
+        elseif ocr then
             texts[#texts + 1] = d
         else
             found[#found + 1] = d
         end
+    end
+    local holders = {}
+    for _, p in ipairs(input.placed or {}) do
+        holders[#holders + 1] = p.component_id
+    end
+    local other = presence and holders or (input.counted or {})
+    local conflicts = 0
+    local counts, count_of = {}, {}
+    local function tally(by, id)
+        local k = by .. ":" .. tostring(id)
+        local entry = count_of[k]
+        if entry == nil then
+            entry = { count = 0 }
+            entry[by] = id
+            count_of[k] = entry
+            counts[#counts + 1] = entry
+        end
+        entry.count = entry.count + 1
     end
     local boxes = nms(found, threshold)
     for _, d in ipairs(texts) do
@@ -218,6 +252,12 @@ function populate.place(input)
         if existing == nil and only ~= nil then
             outside = outside + 1
             placement = nil
+        elseif existing ~= nil and contains(other, existing.id) then
+            conflicts = conflicts + 1
+            placement = nil
+        elseif existing ~= nil and presence then
+            tally("component_id", existing.id)
+            placement = nil
         elseif existing ~= nil then
             if already_placed(input.placed, existing.id, placement, threshold) then
                 duplicates = duplicates + 1
@@ -239,7 +279,12 @@ function populate.place(input)
                 index = #fresh
                 by_key[k] = index
             end
-            placement.new = index
+            if presence then
+                tally("new", index)
+                placement = nil
+            else
+                placement.new = index
+            end
         end
         if placement ~= nil then
             placements[#placements + 1] = placement
@@ -247,10 +292,12 @@ function populate.place(input)
     end
     return {
         placements = placements,
+        counts = counts,
         new_components = fresh,
         skipped = skipped,
         duplicates = duplicates,
         outside = outside,
+        conflicts = conflicts,
     }
 end
 

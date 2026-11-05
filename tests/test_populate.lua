@@ -115,4 +115,53 @@ local unnamed = populate.place({
 t.eq(#unnamed.placements, 0, "a name alone does not count with only")
 t.eq(unnamed.outside, 1, "the box is outside")
 
+-- Reads: YOLO leaves the text boxes out, OCR the class boxes.
+local mixed = {
+    box("pin", 0, 0, 40, 20),
+    box("D268", 10, 5, 10, 5, { kind = "ocr" }),
+}
+local both_kinds = {
+    { id = "k1", name = "Pin", class_ids = { "c-pin" }, text_values = {} },
+    { id = "k2", name = "Label", class_ids = {}, text_values = { "d268" } },
+}
+local yolo = populate.place({ detections = mixed, components = both_kinds, classes = classes, reads = "yolo" })
+t.eq(#yolo.placements, 1, "YOLO reads the class box alone")
+t.eq(yolo.placements[1].component_id, "k1", "and it takes no text")
+local ocr = populate.place({ detections = mixed, components = both_kinds, classes = classes, reads = "ocr" })
+t.eq(#ocr.placements, 1, "OCR reads the text box alone")
+t.eq(ocr.placements[1].component_id, "k2", "the text box is its component")
+
+-- Presence counts each component's boxes and places none.
+local counted = populate.place({
+    detections = { box("pin", 0, 0, 10, 10), box("pin", 50, 0, 10, 10), box("cap", 90, 0, 10, 10) },
+    components = { { id = "k1", name = "Pin", class_ids = { "c-pin" }, text_values = {} } },
+    classes = classes,
+    kind = "presence",
+})
+t.eq(#counted.placements, 0, "presence places no boxes")
+t.eq(#counted.counts, 2, "one count per component")
+t.eq(counted.counts[1].component_id, "k1", "a catalog component is counted")
+t.eq(counted.counts[1].count, 2, "by its boxes")
+t.eq(counted.counts[2].new, 1, "a new component is counted by index")
+t.eq(counted.counts[2].count, 1, "once")
+
+-- Spatial and Presence keep out of each other's components.
+local spatial_held = populate.place({
+    detections = { box("pin", 50, 0, 10, 10) },
+    components = { { id = "k1", name = "Pin", class_ids = { "c-pin" }, text_values = {} } },
+    classes = classes,
+    placed = { { component_id = "k1", x = 0, y = 0, width = 10, height = 10 } },
+    kind = "presence",
+})
+t.eq(#spatial_held.counts, 0, "presence skips a component with Spatial boxes")
+t.eq(spatial_held.conflicts, 1, "as a conflict")
+local presence_held = populate.place({
+    detections = { box("pin", 0, 0, 10, 10) },
+    components = { { id = "k1", name = "Pin", class_ids = { "c-pin" }, text_values = {} } },
+    classes = classes,
+    counted = { "k1" },
+})
+t.eq(#presence_held.placements, 0, "spatial skips a counted component")
+t.eq(presence_held.conflicts, 1, "as a conflict")
+
 if not t.summary("populate") then os.exit(1) end
