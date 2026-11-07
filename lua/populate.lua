@@ -8,6 +8,7 @@
 --     placed     = { { component_id, x, y, width, height } } | nil,  -- on the view already
 --     counted    = { component_id } | nil,  -- with Presence on the view
 --     only       = { component_id } | nil,  -- place into these alone
+--     picked     = { class_id } | nil,      -- read these classes' boxes alone
 --     reads      = "yolo"|"ocr"|"all" | nil, -- which boxes count; nil = all
 --     kind       = "spatial"|"presence" | nil, -- what a box becomes; nil = spatial
 --     iou        = 0.5 | nil,
@@ -18,6 +19,7 @@
 --     skipped        = <boxes with no label>,
 --     duplicates     = <boxes already placed>,
 --     outside        = <boxes none of `only` is>,
+--     unpicked       = <class boxes of classes not `picked`>,
 --     conflicts      = <boxes of components the view holds the other way>,
 --   }
 --
@@ -34,7 +36,8 @@
 -- its text, else the first linked to its class; nothing is made, names do
 -- not count, and a box none of them is counts as `outside`.
 -- `reads = "yolo"` drops the text boxes (no box takes a text); `"ocr"`
--- drops the class boxes. A component is placed by Spatial boxes or counted
+-- drops the class boxes. With `picked`, a class box whose label is none of
+-- those classes is dropped before anything else, as `unpicked`. A component is placed by Spatial boxes or counted
 -- by Presence on a view, not both: Spatial skips the boxes of `counted`
 -- components, Presence those of components with `placed` boxes, each as a
 -- conflict. Presence makes no placements; each component's boxes become
@@ -180,8 +183,13 @@ end
 function populate.place(input)
     local threshold = tonumber(input.iou) or DEFAULT_IOU
     local found, texts = {}, {}
-    local skipped, duplicates, outside = 0, 0, 0
+    local skipped, duplicates, outside, unpicked = 0, 0, 0, 0
     local only = input.only
+    local picked = input.picked
+    local function is_picked(label)
+        local class = class_of(label, input.classes)
+        return class ~= nil and contains(picked, class.id)
+    end
     local reads = input.reads or "all"
     local presence = input.kind == "presence"
     for _, d in ipairs(input.detections or {}) do
@@ -192,6 +200,8 @@ function populate.place(input)
             skipped = skipped + 1
         elseif ocr then
             texts[#texts + 1] = d
+        elseif picked ~= nil and not is_picked(d.label) then
+            unpicked = unpicked + 1
         else
             found[#found + 1] = d
         end
@@ -298,47 +308,9 @@ function populate.place(input)
         skipped = skipped,
         duplicates = duplicates,
         outside = outside,
+        unpicked = unpicked,
         conflicts = conflicts,
     }
-end
-
--- populate.classes {
---   components = { { id, name, class_ids } },
---   classes    = { { id, label, geometry? } },     -- the view model's classes
--- } -> { new_components = { { name, class_ids, text_values, width, height, geometry? } },
---        existing = { component_id } }
---
--- Each class's component: the one linked to it, else named like it, as
--- `place` finds a class box's component, listed once in `existing`; else a
--- new one. Labels that read the same make one component. A new component
--- starts with its class's geometry, as `place` gives one made from a class.
-function populate.classes(input)
-    local components = input.components or {}
-    local fresh, seen, existing, listed = {}, {}, {}, {}
-    for _, class in ipairs(input.classes or {}) do
-        local name = trim(class.label)
-        local k = key(name)
-        local found = name ~= "" and find_component(components, "", class, name) or nil
-        if name == "" or seen[k] then
-            -- nothing to name, or made already
-        elseif found ~= nil then
-            if not listed[found.id] then
-                listed[found.id] = true
-                existing[#existing + 1] = found.id
-            end
-        else
-            seen[k] = true
-            fresh[#fresh + 1] = {
-                name = name,
-                class_ids = { class.id },
-                text_values = {},
-                width = 0,
-                height = 0,
-                geometry = class.geometry,
-            }
-        end
-    end
-    return { new_components = fresh, existing = existing }
 end
 
 return populate

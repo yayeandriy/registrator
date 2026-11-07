@@ -164,28 +164,6 @@ local presence_held = populate.place({
 t.eq(#presence_held.placements, 0, "spatial skips a counted component")
 t.eq(presence_held.conflicts, 1, "as a conflict")
 
--- Every class gets a component unless one is linked to it or named like it.
-local by_class = populate.classes({
-    components = {
-        { id = "k1", name = "Anything", class_ids = { "c-pin" } },
-        { id = "k2", name = "CAP", class_ids = {} },
-    },
-    classes = {
-        { id = "c-pin", label = "pin" },
-        { id = "c-cap", label = "cap" },
-        { id = "c-nut", label = "nut" },
-        { id = "c-nut2", label = " Nut " },
-        { id = "c-blank", label = "  " },
-    },
-})
-t.eq(#by_class.existing, 2, "a linked class and a class named like a component have one, listed")
-t.eq(by_class.existing[1], "k1", "in class order, the linked one")
-t.eq(by_class.existing[2], "k2", "then the one named like its class")
-t.eq(#by_class.new_components, 1, "labels that read the same make one component")
-t.eq(by_class.new_components[1].name, "nut", "the new component is named after its class")
-t.eq(by_class.new_components[1].class_ids[1], "c-nut", "and linked to it")
-t.eq(#populate.classes({ components = {}, classes = {} }).new_components, 0, "no classes, nothing new")
-
 -- A component made from a class starts with the class's geometry.
 local shaped = {
     real_size = { long = 12, lat = 4 },
@@ -193,16 +171,35 @@ local shaped = {
     thresholds = { distance = 0.5, rotation = 3 },
 }
 local geometry_classes = { { id = "c-res", label = "res", geometry = shaped }, { id = "c-led", label = "led" } }
-local made = populate.classes({ components = {}, classes = geometry_classes }).new_components
+local made = populate.place({
+    detections = { box("res", 0, 0, 10, 10), box("led", 50, 0, 10, 10) },
+    components = {},
+    classes = geometry_classes,
+}).new_components
 t.eq(made[1].geometry.symmetry, "180", "a new component takes its class's symmetry")
 t.eq(made[1].geometry.real_size.long, 12, "and its real size")
 t.eq(made[1].geometry.thresholds.rotation, 3, "and its thresholds")
 t.eq(made[2].geometry, nil, "a class with no geometry gives none")
-local placed = populate.place({
-    detections = { box("res", 0, 0, 10, 10) },
+
+-- Picked classes: only their boxes count; texts are read as before.
+local picked = populate.place({
+    detections = {
+        box("pin", 0, 0, 10, 10),
+        box("cap", 50, 0, 10, 10),
+        box("bolt", 80, 0, 10, 10),
+        box("0900", 200, 0, 10, 5, { kind = "ocr" }),
+    },
     components = {},
-    classes = geometry_classes,
-}).new_components
-t.eq(placed[1].geometry.symmetry, "180", "a component populated from a class box takes it too")
+    classes = classes,
+    picked = { "c-pin" },
+})
+t.eq(picked.unpicked, 2, "boxes of classes not picked, and of no class, are unpicked")
+t.eq(#picked.new_components, 2, "the picked class and the text make components")
+t.eq(picked.new_components[1].name, "pin", "the picked class's box is placed")
+t.eq(picked.new_components[2].name, "0900", "a text box is read as before")
+local none = populate.place({ detections = { box("pin", 0, 0, 10, 10) }, classes = classes, picked = {} })
+t.eq(#none.placements, 0, "nothing picked places no class box")
+t.eq(populate.place({ detections = { box("pin", 0, 0, 10, 10) }, classes = classes }).unpicked, 0,
+    "without picked every class counts")
 
 if not t.summary("populate") then os.exit(1) end
