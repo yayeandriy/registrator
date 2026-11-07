@@ -186,4 +186,23 @@ t.eq(by_class.new_components[1].name, "nut", "the new component is named after i
 t.eq(by_class.new_components[1].class_ids[1], "c-nut", "and linked to it")
 t.eq(#populate.classes({ components = {}, classes = {} }).new_components, 0, "no classes, nothing new")
 
+-- A component made from a class starts with the class's geometry.
+local shaped = {
+    real_size = { long = 12, lat = 4 },
+    symmetry = "180",
+    thresholds = { distance = 0.5, rotation = 3 },
+}
+local geometry_classes = { { id = "c-res", label = "res", geometry = shaped }, { id = "c-led", label = "led" } }
+local made = populate.classes({ components = {}, classes = geometry_classes }).new_components
+t.eq(made[1].geometry.symmetry, "180", "a new component takes its class's symmetry")
+t.eq(made[1].geometry.real_size.long, 12, "and its real size")
+t.eq(made[1].geometry.thresholds.rotation, 3, "and its thresholds")
+t.eq(made[2].geometry, nil, "a class with no geometry gives none")
+local placed = populate.place({
+    detections = { box("res", 0, 0, 10, 10) },
+    components = {},
+    classes = geometry_classes,
+}).new_components
+t.eq(placed[1].geometry.symmetry, "180", "a component populated from a class box takes it too")
+
 if not t.summary("populate") then os.exit(1) end

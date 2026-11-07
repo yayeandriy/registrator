@@ -14,7 +14,7 @@
 --   } -> {
 --     placements     = { { component_id? , new?, x, y, width, height, rotation } },
 --     counts         = { { component_id?, new?, count } },  -- kind = "presence"
---     new_components = { { name, class_ids, text_values, width, height } },
+--     new_components = { { name, class_ids, text_values, width, height, geometry? } },
 --     skipped        = <boxes with no label>,
 --     duplicates     = <boxes already placed>,
 --     outside        = <boxes none of `only` is>,
@@ -275,6 +275,7 @@ function populate.place(input)
                     text_values = text ~= "" and { text } or {},
                     width = d.width,
                     height = d.height,
+                    geometry = class ~= nil and class.geometry or nil,
                 }
                 index = #fresh
                 by_key[k] = index
@@ -303,13 +304,14 @@ end
 
 -- populate.classes {
 --   components = { { id, name, class_ids } },
---   classes    = { { id, label } },     -- the view model's classes
--- } -> { new_components = { { name, class_ids, text_values, width, height } },
+--   classes    = { { id, label, geometry? } },     -- the view model's classes
+-- } -> { new_components = { { name, class_ids, text_values, width, height, geometry? } },
 --        existing = { component_id } }
 --
 -- Each class's component: the one linked to it, else named like it, as
 -- `place` finds a class box's component, listed once in `existing`; else a
--- new one. Labels that read the same make one component.
+-- new one. Labels that read the same make one component. A new component
+-- starts with its class's geometry, as `place` gives one made from a class.
 function populate.classes(input)
     local components = input.components or {}
     local fresh, seen, existing, listed = {}, {}, {}, {}
@@ -332,6 +334,7 @@ function populate.classes(input)
                 text_values = {},
                 width = 0,
                 height = 0,
+                geometry = class.geometry,
             }
         end
     end
