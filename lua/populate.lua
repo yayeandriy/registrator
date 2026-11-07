@@ -301,4 +301,41 @@ function populate.place(input)
     }
 end
 
+-- populate.classes {
+--   components = { { id, name, class_ids } },
+--   classes    = { { id, label } },     -- the view model's classes
+-- } -> { new_components = { { name, class_ids, text_values, width, height } },
+--        existing = { component_id } }
+--
+-- Each class's component: the one linked to it, else named like it, as
+-- `place` finds a class box's component, listed once in `existing`; else a
+-- new one. Labels that read the same make one component.
+function populate.classes(input)
+    local components = input.components or {}
+    local fresh, seen, existing, listed = {}, {}, {}, {}
+    for _, class in ipairs(input.classes or {}) do
+        local name = trim(class.label)
+        local k = key(name)
+        local found = name ~= "" and find_component(components, "", class, name) or nil
+        if name == "" or seen[k] then
+            -- nothing to name, or made already
+        elseif found ~= nil then
+            if not listed[found.id] then
+                listed[found.id] = true
+                existing[#existing + 1] = found.id
+            end
+        else
+            seen[k] = true
+            fresh[#fresh + 1] = {
+                name = name,
+                class_ids = { class.id },
+                text_values = {},
+                width = 0,
+                height = 0,
+            }
+        end
+    end
+    return { new_components = fresh, existing = existing }
+end
+
 return populate

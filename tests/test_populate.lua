@@ -164,4 +164,26 @@ local presence_held = populate.place({
 t.eq(#presence_held.placements, 0, "spatial skips a counted component")
 t.eq(presence_held.conflicts, 1, "as a conflict")
 
+-- Every class gets a component unless one is linked to it or named like it.
+local by_class = populate.classes({
+    components = {
+        { id = "k1", name = "Anything", class_ids = { "c-pin" } },
+        { id = "k2", name = "CAP", class_ids = {} },
+    },
+    classes = {
+        { id = "c-pin", label = "pin" },
+        { id = "c-cap", label = "cap" },
+        { id = "c-nut", label = "nut" },
+        { id = "c-nut2", label = " Nut " },
+        { id = "c-blank", label = "  " },
+    },
+})
+t.eq(#by_class.existing, 2, "a linked class and a class named like a component have one, listed")
+t.eq(by_class.existing[1], "k1", "in class order, the linked one")
+t.eq(by_class.existing[2], "k2", "then the one named like its class")
+t.eq(#by_class.new_components, 1, "labels that read the same make one component")
+t.eq(by_class.new_components[1].name, "nut", "the new component is named after its class")
+t.eq(by_class.new_components[1].class_ids[1], "c-nut", "and linked to it")
+t.eq(#populate.classes({ components = {}, classes = {} }).new_components, 0, "no classes, nothing new")
+
 if not t.summary("populate") then os.exit(1) end
