@@ -198,7 +198,14 @@ t.eq(#picked.new_components, 2, "the picked class and the text make components")
 t.eq(picked.new_components[1].name, "pin", "the picked class's box is placed")
 t.eq(picked.new_components[2].name, "0900", "a text box is read as before")
 local none = populate.place({ detections = { box("pin", 0, 0, 10, 10) }, classes = classes, picked = {} })
-t.eq(#none.placements, 0, "nothing picked places no class box")
+t.eq(#none.placements, 1, "nothing picked picks every class")
+t.eq(none.unpicked, 0, "nothing picked leaves no box unpicked")
+local elsewhere = populate.place({
+    detections = { box("pin", 0, 0, 10, 10) },
+    classes = classes,
+    picked = { "another-model-class" },
+})
+t.eq(#elsewhere.placements, 1, "picks of another model's classes pick every class")
 t.eq(populate.place({ detections = { box("pin", 0, 0, 10, 10) }, classes = classes }).unpicked, 0,
     "without picked every class counts")
 
