@@ -11,6 +11,7 @@
 --     picked     = { class_id } | nil,      -- read these classes' boxes alone; none of `classes` = all
 --     reads      = "yolo"|"ocr"|"all" | nil, -- which boxes count; nil = all
 --     kind       = "spatial"|"presence" | nil, -- what a box becomes; nil = spatial
+--     areas      = { { { x, y } } } | nil,  -- polygons on the board; none = the whole board
 --     iou        = 0.5 | nil,
 --   } -> {
 --     placements     = { { component_id? , new?, x, y, width, height, rotation } },
@@ -21,6 +22,7 @@
 --     outside        = <boxes none of `only` is>,
 --     unpicked       = <class boxes of classes not `picked`>,
 --     conflicts      = <boxes of components the view holds the other way>,
+--     out_of_area    = <boxes whose middle lies in none of `areas`>,
 --   }
 --
 -- Boxes are in board units. Overlapping class boxes collapse to the most
@@ -35,6 +37,8 @@
 -- With `only`, a box goes to the first of those components whose texts hold
 -- its text, else the first linked to its class; nothing is made, names do
 -- not count, and a box none of them is counts as `outside`.
+-- With `areas`, a box (class or text) whose middle lies in none of those
+-- polygons is dropped first, as `out_of_area`.
 -- `reads = "yolo"` drops the text boxes (no box takes a text); `"ocr"`
 -- drops the class boxes. With `picked`, a class box whose label is none of
 -- those classes is dropped before anything else, as `unpicked`; a `picked`
@@ -43,6 +47,8 @@
 -- components, Presence those of components with `placed` boxes, each as a
 -- conflict. Presence makes no placements; each component's boxes become
 -- its count, in the order first found.
+--
+-- Needs `zone` in scope (`zone.lua`): the hosts compose it ahead of this.
 
 local populate = {}
 
@@ -121,6 +127,19 @@ local function inside(box, d)
     return cx >= box.x and cx <= box.x + box.width and cy >= box.y and cy <= box.y + box.height
 end
 
+local function in_areas(areas, d)
+    if areas == nil or #areas == 0 then
+        return true
+    end
+    local cx, cy = d.x + d.width / 2, d.y + d.height / 2
+    for _, points in ipairs(areas) do
+        if zone.point_in_zone(points, cx, cy) then
+            return true
+        end
+    end
+    return false
+end
+
 local function class_of(label, classes)
     local wanted = key(label)
     for _, c in ipairs(classes or {}) do
@@ -184,7 +203,7 @@ end
 function populate.place(input)
     local threshold = tonumber(input.iou) or DEFAULT_IOU
     local found, texts = {}, {}
-    local skipped, duplicates, outside, unpicked = 0, 0, 0, 0
+    local skipped, duplicates, outside, unpicked, out_of_area = 0, 0, 0, 0, 0
     local only = input.only
     local picked = input.picked
     if picked ~= nil then
@@ -206,6 +225,8 @@ function populate.place(input)
         local ocr = d.kind == "ocr"
         if (ocr and reads == "yolo") or (not ocr and reads == "ocr") then
             -- not read
+        elseif not in_areas(input.areas, d) then
+            out_of_area = out_of_area + 1
         elseif trim(d.label) == "" then
             skipped = skipped + 1
         elseif ocr then
@@ -320,6 +341,7 @@ function populate.place(input)
         outside = outside,
         unpicked = unpicked,
         conflicts = conflicts,
+        out_of_area = out_of_area,
     }
 end
 

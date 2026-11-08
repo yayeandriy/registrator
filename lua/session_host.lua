@@ -4,8 +4,8 @@
 -- Needs, in scope and in this order: `json`, `normalisator`,
 -- `ocr_window`, `inspect_view`, `verdict`, `session`, `session_zones`,
 -- `session_extras`, `session_view`, `report_rules`, `report_catalog`,
--- `report_zones`, `report`, `populate`. The host concatenates them ahead
--- of this file.
+-- `report_zones`, `report`, `zone`, `populate`. The host concatenates
+-- them ahead of this file.
 --
 -- Input:  { module = "verdict"|"session"|"zones"|"ocr"|"extras"|"view"|"report"|"populate",
 --           op = "<name>", args = { ... } }

@@ -1,5 +1,6 @@
 local script_dir = (arg[0]):match("(.*/)") or "./"
 local t = dofile(script_dir .. "asserts.lua")
+zone = dofile(script_dir .. "../lua/zone.lua")
 local populate = dofile(script_dir .. "../lua/populate.lua")
 
 local function box(label, x, y, w, h, extra)
@@ -208,5 +209,40 @@ local elsewhere = populate.place({
 t.eq(#elsewhere.placements, 1, "picks of another model's classes pick every class")
 t.eq(populate.place({ detections = { box("pin", 0, 0, 10, 10) }, classes = classes }).unpicked, 0,
     "without picked every class counts")
+
+-- Areas: only boxes whose middle lies in one of them count.
+local triangle = { { x = 0, y = 0 }, { x = 100, y = 0 }, { x = 0, y = 100 } }
+local square = { { x = 200, y = 200 }, { x = 300, y = 200 }, { x = 300, y = 300 }, { x = 200, y = 300 } }
+local areas = populate.place({
+    detections = {
+        box("pin", 10, 10, 10, 10),
+        box("pin", 80, 80, 10, 10),
+        box("cap", 240, 240, 10, 10),
+        box("0900", 5, 60, 10, 5, { kind = "ocr" }),
+        box("0901", 150, 150, 10, 5, { kind = "ocr" }),
+    },
+    components = {},
+    classes = classes,
+    areas = { triangle, square },
+})
+t.eq(areas.out_of_area, 2, "a box whose middle is in no area is out of area, class or text")
+t.eq(#areas.placements, 3, "boxes inside any area are placed")
+t.eq(#areas.new_components, 3, "pin, cap and the text inside")
+local partly = populate.place({
+    detections = { box("pin", 95, -5, 20, 20) },
+    classes = classes,
+    areas = { triangle },
+})
+t.eq(partly.out_of_area, 1, "a box reaching into an area with its middle outside is out")
+local whole = populate.place({ detections = { box("pin", 500, 500, 10, 10) }, classes = classes, areas = {} })
+t.eq(whole.out_of_area, 0, "no areas keep the whole board")
+t.eq(#whole.placements, 1, "and place everything")
+local unread = populate.place({
+    detections = { box("0900", 500, 500, 10, 5, { kind = "ocr" }) },
+    classes = classes,
+    reads = "yolo",
+    areas = { triangle },
+})
+t.eq(unread.out_of_area, 0, "boxes not read are not counted out of area")
 
 if not t.summary("populate") then os.exit(1) end

@@ -55,6 +55,16 @@ t.eq(none.kind, "none", "an empty profile has no placeholder rows")
 local sticky = host(json.encode({ module = "extras", op = "sticky", args = { latched = {}, current = {} } }))
 t.eq(sticky:find('"detections":[]', 1, true) ~= nil and sticky:find('"latched":[]', 1, true) ~= nil, true,
     "extras round-trip as arrays")
+local fenced = call("populate", "place", {
+    detections = {
+        { label = "pin", confidence = 0.9, x = 0, y = 0, width = 10, height = 10, kind = "yolo" },
+        { label = "pin", confidence = 0.9, x = 90, y = 90, width = 10, height = 10, kind = "yolo" },
+    },
+    components = {},
+    classes = {},
+    areas = { { { x = 0, y = 0 }, { x = 50, y = 0 }, { x = 50, y = 50 }, { x = 0, y = 50 } } },
+})
+t.eq(fenced.out_of_area, 1, "populate keeps to its areas through the host")
 
 if not t.summary("session_host") then
     os.exit(1)
