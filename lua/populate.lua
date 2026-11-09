@@ -9,6 +9,7 @@
 --     counted    = { component_id } | nil,  -- with Presence on the view
 --     only       = { component_id } | nil,  -- place into these alone
 --     picked     = { class_id } | nil,      -- read these classes' boxes alone; none of `classes` = all
+--     none_picked = true | nil,             -- with `picked`, none of `classes` = none
 --     reads      = "yolo"|"ocr"|"all" | nil, -- which boxes count; nil = all
 --     kind       = "spatial"|"presence" | nil, -- what a box becomes; nil = spatial
 --     areas      = { { { x, y } } } | nil,  -- polygons on the board; none = the whole board
@@ -42,7 +43,7 @@
 -- `reads = "yolo"` drops the text boxes (no box takes a text); `"ocr"`
 -- drops the class boxes. With `picked`, a class box whose label is none of
 -- those classes is dropped before anything else, as `unpicked`; a `picked`
--- holding none of `classes` picks every class. A component is placed by Spatial boxes or counted
+-- holding none of `classes` picks every class, or none with `none_picked`. A component is placed by Spatial boxes or counted
 -- by Presence on a view, not both: Spatial skips the boxes of `counted`
 -- components, Presence those of components with `placed` boxes, each as a
 -- conflict. Presence makes no placements; each component's boxes become
@@ -206,7 +207,7 @@ function populate.place(input)
     local skipped, duplicates, outside, unpicked, out_of_area = 0, 0, 0, 0, 0
     local only = input.only
     local picked = input.picked
-    if picked ~= nil then
+    if picked ~= nil and not input.none_picked then
         local any = false
         for _, class in ipairs(input.classes or {}) do
             any = any or contains(picked, class.id)

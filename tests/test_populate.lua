@@ -207,6 +207,14 @@ local elsewhere = populate.place({
     picked = { "another-model-class" },
 })
 t.eq(#elsewhere.placements, 1, "picks of another model's classes pick every class")
+local unpicked = populate.place({
+    detections = { box("pin", 0, 0, 10, 10) },
+    classes = classes,
+    picked = { "another-model-class" },
+    none_picked = true,
+})
+t.eq(#unpicked.placements, 0, "with none_picked, none of the classes picked places nothing")
+t.eq(unpicked.unpicked, 1, "and every class box is unpicked")
 t.eq(populate.place({ detections = { box("pin", 0, 0, 10, 10) }, classes = classes }).unpicked, 0,
     "without picked every class counts")
 
