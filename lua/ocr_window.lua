@@ -14,6 +14,10 @@
 --       frames = { { t, detections = { { label, kind, width, height, ... } } } },
 --       live_labels = { "<geometric det label>" }, needles, ocr_ticked }
 --     -> { frames }
+--   ocr_window.text_reads {
+--       mode = "frame"|"window"|"view", reads = { <this tick's detection> },
+--       frames = { { detections } }, pool = { <detection> }, needles }
+--     -> { reads, pool }
 
 local ocr_window = {}
 
@@ -121,6 +125,56 @@ function ocr_window.drop_stale(input)
         f.detections = kept
     end
     return { frames = frames }
+end
+
+-- Which text reads Presence scores this tick. `frame`: this tick's own.
+-- `window`: also expected text read in any frame still in the window.
+-- `view`: also expected text read earlier in the view; `pool` carries those
+-- reads from tick to tick, and the host empties it when the view changes.
+-- A text read this tick stands for any earlier read of the same text.
+function ocr_window.text_reads(input)
+    local mode = input.mode
+    local reads = input.reads or {}
+    if mode ~= "window" and mode ~= "view" then
+        return { reads = reads, pool = {} }
+    end
+    local needles = input.needles or {}
+    local out, seen = {}, {}
+    local function expected(d)
+        return is_ocr_kind(d.kind) and hits_any(d.label, needles)
+    end
+    for _, d in ipairs(reads) do
+        out[#out + 1] = d
+        if is_ocr_kind(d.kind) then
+            seen[key(d.label)] = true
+        end
+    end
+    local function add(d)
+        local k = key(d.label)
+        if expected(d) and not seen[k] then
+            seen[k] = true
+            out[#out + 1] = d
+        end
+    end
+    local pool = {}
+    if mode == "window" then
+        local frames = input.frames or {}
+        for i = #frames, 1, -1 do
+            for _, d in ipairs(frames[i].detections or {}) do
+                add(d)
+            end
+        end
+    else
+        for _, d in ipairs(input.pool or {}) do
+            add(d)
+        end
+        for _, d in ipairs(out) do
+            if expected(d) then
+                pool[#pool + 1] = d
+            end
+        end
+    end
+    return { reads = out, pool = pool }
 end
 
 return ocr_window

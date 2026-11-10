@@ -70,6 +70,13 @@ local named = populate.place({
     components = { { id = "k9", name = "CAP", class_ids = {}, text_values = {} } },
     classes = classes,
 })
+local texts_only = populate.place({
+    detections = { box("cap", 0, 0, 10, 10) },
+    components = { { id = "k8", name = "cap", class_ids = {}, text_values = { "cap" } } },
+    classes = classes,
+})
+t.eq(texts_only.placements[1].new, 1, "a class box makes its own component beside one that only reads texts")
+t.eq(texts_only.new_components[1].class_ids[1], "c-cap", "linked to the box's class")
 t.eq(named.placements[1].component_id, "k9", "a component named like the class is reused")
 
 -- A box its component already has on the view is not placed again.

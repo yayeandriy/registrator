@@ -30,8 +30,9 @@
 -- confident one, whatever their classes (class-agnostic NMS); text boxes
 -- are kept as found. A class box takes the first text box whose middle lies
 -- inside it as its text. A box is the component whose texts hold its text;
--- else, with no text, the one linked to its class; else one named like it;
--- else a new component, made once per text or class. A placement names a
+-- else, with no text, the one linked to its class; else one named like it,
+-- though never, for a class box, one that only reads texts; else a new
+-- component, made once per text or class. A placement names a
 -- catalog component by `component_id` or a new one by `new` (its index in
 -- `new_components`). A box of a catalog component that overlaps one of that
 -- component's `placed` boxes by `iou` or more is already placed and dropped.
@@ -168,7 +169,8 @@ local function find_component(components, text, class, name)
         end
     end
     for _, c in ipairs(components) do
-        if key(c.name) == key(name) then
+        local reads_only = #(c.class_ids or {}) == 0 and #(c.text_values or {}) > 0
+        if key(c.name) == key(name) and not (class ~= nil and reads_only) then
             return c
         end
     end
