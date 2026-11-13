@@ -27,6 +27,7 @@ local suites = {
     "test_report.lua",
     "test_report_catalog.lua",
     "test_populate.lua",
+    "test_detect.lua",
 }
 
 local any_failed = false

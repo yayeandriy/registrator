@@ -4,10 +4,10 @@
 -- Needs, in scope and in this order: `json`, `normalisator`,
 -- `ocr_window`, `inspect_view`, `verdict`, `session`, `session_zones`,
 -- `session_extras`, `session_view`, `report_rules`, `report_catalog`,
--- `report_zones`, `report`, `zone`, `populate`. The host concatenates
+-- `report_zones`, `report`, `zone`, `populate`, `detect`. The host concatenates
 -- them ahead of this file.
 --
--- Input:  { module = "verdict"|"session"|"zones"|"ocr"|"extras"|"view"|"report"|"populate",
+-- Input:  { module = "verdict"|"session"|"zones"|"ocr"|"extras"|"view"|"report"|"populate"|"detect",
 --           op = "<name>", args = { ... } }
 --         as JSON text (Rust) or as the table `LuaVM` already decoded (Swift).
 -- Output: the op's result — JSON text for text input, a table otherwise.
@@ -21,6 +21,7 @@ local modules = {
     view = session_view,
     report = report,
     populate = populate,
+    detect = detect,
 }
 
 -- Any `json.lua` instance decodes `null` to its own empty sentinel whose

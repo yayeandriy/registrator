@@ -66,6 +66,15 @@ local fenced = call("populate", "place", {
 })
 t.eq(fenced.out_of_area, 1, "populate keeps to its areas through the host")
 
+local collapsed = call("detect", "collapse", {
+    boxes = {
+        { x = 0, y = 0, width = 10, height = 10, confidence = 0.6 },
+        { x = 1, y = 1, width = 10, height = 10, confidence = 0.9 },
+    },
+    iou = 0.45,
+})
+t.ok(collapsed.keep[1] == false and collapsed.keep[2] == true, "detect collapse over JSON")
+
 if not t.summary("session_host") then
     os.exit(1)
 end

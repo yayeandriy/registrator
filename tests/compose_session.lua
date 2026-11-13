@@ -24,6 +24,7 @@ local LIBS = {
     { "report", "report.lua" },
     { "zone", "zone.lua" },
     { "populate", "populate.lua" },
+    { "detect", "detect.lua" },
 }
 
 return function(lua_dir)
