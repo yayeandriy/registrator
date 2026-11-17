@@ -14,6 +14,7 @@
 --     kind       = "spatial"|"presence" | nil, -- what a box becomes; nil = spatial
 --     areas      = { { { x, y } } } | nil,  -- polygons on the board; none = the whole board
 --     iou        = 0.5 | nil,
+--     separate   = true | nil,           -- each box its own component
 --   } -> {
 --     placements     = { { component_id? , new?, x, y, width, height, rotation } },
 --     counts         = { { component_id?, new?, count } },  -- kind = "presence"
@@ -49,6 +50,14 @@
 -- components, Presence those of components with `placed` boxes, each as a
 -- conflict. Presence makes no placements; each component's boxes become
 -- its count, in the order first found.
+--
+-- With `separate`, a box goes to the first component it is that is free
+-- (Spatial: holds no `placed` box; either: took no box earlier in this
+-- call), else to a new one of its own, named after it and numbered past
+-- the names taken ("square", "square 2"); Presence counts each so 1. A
+-- Spatial box overlapping a `placed` box of any of them is a duplicate.
+-- None free, a box goes to the first with `only`, and is a conflict when
+-- the first is held the other way.
 --
 -- Needs `zone` in scope (`zone.lua`): the hosts compose it ahead of this.
 
@@ -152,55 +161,68 @@ local function class_of(label, classes)
     return nil
 end
 
-local function find_component(components, text, class, name)
-    if text ~= "" then
-        for _, c in ipairs(components) do
+-- Every component a box is, best first: those reading its text, else
+-- (no text) those linked to its class; then those named like it, never,
+-- for a class box, one that only reads texts.
+local function matching(components, text, class, name)
+    local out, seen = {}, {}
+    local function add(c)
+        if not seen[c] then
+            seen[c] = true
+            out[#out + 1] = c
+        end
+    end
+    for _, c in ipairs(components) do
+        if text ~= "" then
             for _, t in ipairs(c.text_values or {}) do
                 if key(t) == key(text) then
-                    return c
+                    add(c)
                 end
             end
-        end
-    elseif class ~= nil then
-        for _, c in ipairs(components) do
-            if contains(c.class_ids, class.id) then
-                return c
-            end
+        elseif class ~= nil and contains(c.class_ids, class.id) then
+            add(c)
         end
     end
     for _, c in ipairs(components) do
         local reads_only = #(c.class_ids or {}) == 0 and #(c.text_values or {}) > 0
         if key(c.name) == key(name) and not (class ~= nil and reads_only) then
-            return c
+            add(c)
         end
     end
-    return nil
+    return out
 end
 
-local function find_only(components, only, text, class)
-    local chosen = {}
+-- Of `only`, those reading the box's text, then those linked to its class.
+local function only_matching(components, only, text, class)
+    local out = {}
     for _, c in ipairs(components) do
-        if contains(only, c.id) then
-            chosen[#chosen + 1] = c
-        end
-    end
-    if text ~= "" then
-        for _, c in ipairs(chosen) do
+        if contains(only, c.id) and text ~= "" then
             for _, t in ipairs(c.text_values or {}) do
                 if key(t) == key(text) then
-                    return c
+                    out[#out + 1] = c
+                    break
                 end
             end
         end
     end
-    if class ~= nil then
-        for _, c in ipairs(chosen) do
-            if contains(c.class_ids, class.id) then
-                return c
-            end
+    for _, c in ipairs(components) do
+        if contains(only, c.id) and class ~= nil and contains(c.class_ids, class.id) then
+            out[#out + 1] = c
         end
     end
-    return nil
+    return out
+end
+
+-- `base`, else `base 2`, `base 3`…: the first no component is named.
+local function free_name(base, used)
+    local n = 2
+    if not used[key(base)] then
+        return base
+    end
+    while used[key(base .. " " .. n)] do
+        n = n + 1
+    end
+    return base .. " " .. n
 end
 
 function populate.place(input)
@@ -266,6 +288,14 @@ function populate.place(input)
     local components = input.components or {}
     local fresh, by_key = {}, {}
     local placements = {}
+    local separate = input.separate == true
+    local taken, used = {}, {}
+    for _, id in ipairs(presence and {} or holders) do
+        taken[id] = true
+    end
+    for _, c in ipairs(components) do
+        used[key(c.name)] = true
+    end
     for _, d in ipairs(boxes) do
         local text, class = "", nil
         if d.kind == "ocr" then
@@ -287,13 +317,28 @@ function populate.place(input)
             height = d.height,
             rotation = d.rotation or 0,
         }
-        local existing
-        if only ~= nil then
-            existing = find_only(components, only, text, class)
-        else
-            existing = find_component(components, text, class, name)
+        local candidates = only ~= nil and only_matching(components, only, text, class)
+            or matching(components, text, class, name)
+        local existing = candidates[1]
+        local duplicate = false
+        if separate then
+            existing = nil
+            for _, c in ipairs(candidates) do
+                duplicate = duplicate
+                    or (not presence and already_placed(input.placed, c.id, placement, threshold))
+                if existing == nil and not taken[c.id] and not contains(other, c.id) then
+                    existing = c
+                end
+            end
+            local first = candidates[1]
+            if existing == nil and first ~= nil and (only ~= nil or contains(other, first.id)) then
+                existing = first
+            end
         end
-        if existing == nil and only ~= nil then
+        if duplicate then
+            duplicates = duplicates + 1
+            placement = nil
+        elseif existing == nil and only ~= nil then
             outside = outside + 1
             placement = nil
         elseif existing ~= nil and contains(other, existing.id) then
@@ -301,6 +346,7 @@ function populate.place(input)
             placement = nil
         elseif existing ~= nil and presence then
             tally("component_id", existing.id)
+            taken[existing.id] = true
             placement = nil
         elseif existing ~= nil then
             if already_placed(input.placed, existing.id, placement, threshold) then
@@ -308,13 +354,16 @@ function populate.place(input)
                 placement = nil
             else
                 placement.component_id = existing.id
+                taken[existing.id] = true
             end
         else
             local k = key(name)
-            local index = by_key[k]
+            local index = not separate and by_key[k] or nil
             if index == nil then
+                local named = separate and free_name(name, used) or name
+                used[key(named)] = true
                 fresh[#fresh + 1] = {
-                    name = name,
+                    name = named,
                     class_ids = class ~= nil and { class.id } or {},
                     text_values = text ~= "" and { text } or {},
                     width = d.width,

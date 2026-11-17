@@ -260,4 +260,79 @@ local unread = populate.place({
 })
 t.eq(unread.out_of_area, 0, "boxes not read are not counted out of area")
 
+-- Separate: each box its own component, free matches first, numbered names.
+local sep = populate.place({
+    detections = {
+        box("pin", 0, 0, 10, 10),
+        box("pin", 30, 0, 10, 10),
+        box("cap", 60, 0, 10, 10),
+        box("cap", 90, 0, 10, 10),
+    },
+    components = {
+        { id = "k1", name = "pin", class_ids = { "c-pin" }, text_values = {} },
+        { id = "k2", name = "pin 2", class_ids = {}, text_values = {} },
+    },
+    classes = classes,
+    separate = true,
+})
+t.eq(#sep.placements, 4, "separate places every box")
+t.eq(sep.placements[1].component_id, "k1", "the first pin takes the free linked component")
+t.eq(sep.placements[2].new, 1, "the second pin gets a new one")
+t.eq(sep.new_components[1].name, "pin 3", "numbered past the names taken")
+t.eq(sep.new_components[1].class_ids[1], "c-pin", "and linked to the class")
+t.eq(sep.new_components[2].name, "cap", "the first cap keeps the class name")
+t.eq(sep.new_components[3].name, "cap 2", "the next cap is numbered")
+t.eq(sep.placements[4].new, 3, "each cap its own component")
+
+-- Separate: a component holding a box on the view is not free; one of its
+-- boxes found again is a duplicate.
+local again = populate.place({
+    detections = { box("pin", 0, 0, 10, 10), box("pin", 30, 0, 10, 10) },
+    components = { { id = "k1", name = "pin", class_ids = { "c-pin" }, text_values = {} } },
+    classes = classes,
+    placed = { { component_id = "k1", x = 0, y = 0, width = 10, height = 10 } },
+    separate = true,
+})
+t.eq(again.duplicates, 1, "a placed box found again is a duplicate")
+t.eq(#again.placements, 1, "the other box is placed")
+t.eq(again.placements[1].new, 1, "into a new component, the linked one being held")
+t.eq(again.new_components[1].name, "pin 2", "named past the held one")
+
+-- Separate: a counted component still refuses Spatial boxes.
+local held = populate.place({
+    detections = { box("pin", 0, 0, 10, 10) },
+    components = { { id = "k1", name = "pin", class_ids = { "c-pin" }, text_values = {} } },
+    classes = classes,
+    counted = { "k1" },
+    separate = true,
+})
+t.eq(held.conflicts, 1, "a box of a counted component is a conflict")
+t.eq(#held.new_components, 0, "and makes no component")
+
+-- Separate Presence counts each box into a component of its own; a
+-- component it counted before is free again.
+local counted = populate.place({
+    detections = { box("cap", 0, 0, 10, 10), box("cap", 30, 0, 10, 10) },
+    components = { { id = "k1", name = "cap", class_ids = { "c-cap" }, text_values = {} } },
+    classes = classes,
+    kind = "presence",
+    counted = { "k1" },
+    separate = true,
+})
+t.eq(counted.counts[1].component_id, "k1", "the counted component takes the first box again")
+t.eq(counted.counts[1].count, 1, "one box")
+t.eq(counted.counts[2].new, 1, "the second box gets a new component")
+t.eq(counted.new_components[1].name, "cap 2", "numbered")
+t.eq(counted.counts[2].count, 1, "counting one box")
+
+-- Joined Presence counts a kind's boxes into one component.
+local joined = populate.place({
+    detections = { box("cap", 0, 0, 10, 10), box("cap", 30, 0, 10, 10) },
+    components = {},
+    classes = classes,
+    kind = "presence",
+})
+t.eq(#joined.new_components, 1, "one component per class")
+t.eq(joined.counts[1].count, 2, "counting both boxes")
+
 if not t.summary("populate") then os.exit(1) end
