@@ -24,6 +24,7 @@ return function(root)
         wrap("presence_validator", root .. "lua/presence_validator.lua"),
         wrap("accumulator", root .. "lua/accumulator.lua"),
         wrap("zone", root .. "lua/zone.lua"),
+        wrap("wrapper", root .. "lua/wrapper.lua"),
         read(root .. "lua/live_strip.lua"),
         read(root .. "lua/live_spatial.lua"),
         read(root .. "lua/live_window.lua"),

@@ -6,8 +6,9 @@
 --
 -- Ops (`{ op = "<name>", ... }`):
 --
---   from_presence { presence = PresenceResult }        -> { verdict = Verdict }
---   from_spatial  { spatial = ValidationResult,
+--   from_presence { presence = PresenceResult,
+--                   lacks = { [object id] = { Lack } } }  -> { verdict = Verdict }
+--   from_spatial  { spatial = ValidationResult, lacks,
 --                   hold = { HoldEntry } }               -> { verdict, objects, hold }
 --   merge         { presence = Verdict|nil,
 --                   spatial = Verdict|nil,
@@ -22,7 +23,10 @@
 --             incorrect, missing, extra, complete, no_expectations,
 --             rows = { Row } }
 -- Row     = { object_id?, label, status, confidence?, matched_label?,
---             delta_position?, delta_rotation?, match_kind? }
+--             delta_position?, delta_rotation?, match_kind?, lacks? }
+-- Lack    = { label, kind = "class"|"text", why = "unseen"|"outside" }:
+--           a detection of a failed part that did not count (live `lacks`,
+--           or one of several checks of the part that missed)
 -- HoldEntry = { id, shown = <spatial object>, fail_streak }
 
 local verdict = {}
@@ -118,6 +122,17 @@ local function presence_label(o)
     return first_nonempty(o.yolo_classes) or o.matched_label or first_nonempty(o.ocr_values) or ""
 end
 
+local function lacks_for(lacks, o)
+    if o.status == "matched" or type(lacks) ~= "table" then
+        return nil
+    end
+    local found = lacks[o.id]
+    if type(found) == "table" and #found > 0 then
+        return found
+    end
+    return nil
+end
+
 function verdict.from_presence(input)
     local p = input.presence or {}
     local rows = {}
@@ -129,6 +144,7 @@ function verdict.from_presence(input)
             confidence = o.matched_confidence,
             matched_label = o.matched_label,
             match_kind = o.match_kind,
+            lacks = lacks_for(input.lacks, o),
         }
     end
     return { verdict = scored(rows, p.matched or 0, p.total or 0, p.extra or 0) }
@@ -186,6 +202,7 @@ function verdict.from_spatial(input)
             delta_position = o.delta_position,
             delta_rotation = o.delta_rotation,
             match_kind = spatial_kind(o),
+            lacks = lacks_for(input.lacks, o),
         }
     end
     for _, d in ipairs(v.extra_detections or {}) do
@@ -198,10 +215,56 @@ function verdict.from_spatial(input)
     }
 end
 
+-- A part several checks report names the detections that did not count:
+-- those its rows carry, else the missed checks while they differ.
+local function merged_lacks(rows)
+    local out, known, labels, distinct = {}, {}, {}, 0
+    local function add(l)
+        local key = tostring(l.kind) .. ":" .. tostring(l.label)
+        if not known[key] then
+            known[key] = true
+            out[#out + 1] = l
+        end
+    end
+    for _, r in ipairs(rows) do
+        local label = trim(r.label)
+        if label ~= "" and not labels[label] then
+            labels[label] = true
+            distinct = distinct + 1
+        end
+    end
+    for _, r in ipairs(rows) do
+        if type(r.lacks) == "table" and #r.lacks > 0 then
+            for _, l in ipairs(r.lacks) do
+                add(l)
+            end
+        elseif r.status == "missing" and distinct > 1 and trim(r.label) ~= "" then
+            add({ label = trim(r.label), kind = is_ocr_kind(r.match_kind) and "text" or "class", why = "unseen" })
+        end
+    end
+    return out
+end
+
+local function with_lacks(row, rows)
+    if row.status == "matched" then
+        return row
+    end
+    local lacks = merged_lacks(rows)
+    if #lacks == 0 then
+        return row
+    end
+    local out = {}
+    for k, v in pairs(row) do
+        out[k] = v
+    end
+    out.lacks = lacks
+    return out
+end
+
 local function union(presence, spatial)
     local no_expectations = presence.no_expectations and spatial.no_expectations
     local extra = (presence.extra or 0) + (spatial.extra or 0)
-    local by_key, order, extras, unnamed = {}, {}, {}, 0
+    local by_key, order, extras, unnamed, reported = {}, {}, {}, 0, {}
     local function take(row)
         if row.status == "extra" then
             extras[#extras + 1] = row
@@ -212,6 +275,8 @@ local function union(presence, spatial)
             unnamed = unnamed + 1
             key = "anon:" .. unnamed
         end
+        reported[key] = reported[key] or {}
+        table.insert(reported[key], row)
         local existing = by_key[key]
         local rank, known = STATUS_RANK[row.status] or 0, existing and (STATUS_RANK[existing.status] or 0)
         if existing == nil then
@@ -226,7 +291,7 @@ local function union(presence, spatial)
     for _, r in ipairs(spatial.rows or {}) do take(r) end
     local rows, matched = {}, 0
     for _, k in ipairs(order) do
-        rows[#rows + 1] = by_key[k]
+        rows[#rows + 1] = with_lacks(by_key[k], reported[k])
         if by_key[k].status == "matched" then
             matched = matched + 1
         end

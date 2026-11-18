@@ -149,6 +149,35 @@ local lost = rt(verdict.merge({
 }))
 t.eq(lost.verdict.rows[1].match_kind, "yolo", "a missing part outranks its unread text")
 t.eq(lost.verdict.result, "fail", "and is not held as pending")
+t.eq(#lost.verdict.rows[1].lacks, 2, "a lost part names both checks it missed")
+t.eq(both.verdict.rows[1].lacks[1].label, "P06", "a part with one missed check names it")
+t.eq(both.verdict.rows[1].lacks[1].kind, "text", "and says it is a text")
+
+local twice = rt(verdict.merge({
+    presence = { result = "fail", matched = 0, total = 1, incorrect = 0, missing = 1, extra = 0,
+        complete = false, no_expectations = false,
+        rows = { { object_id = "s", label = "pin", status = "missing", match_kind = "yolo" } } },
+    spatial = { result = "fail", matched = 0, total = 1, incorrect = 0, missing = 1, extra = 0,
+        complete = false, no_expectations = false,
+        rows = { { object_id = "s", label = "pin", status = "missing", match_kind = "spatial" } } },
+    ocr = { wants_ocr = false },
+}))
+t.is_nil(twice.verdict.rows[1].lacks, "one detection missed by two checks needs no detail")
+
+local wrapped = rt(verdict.from_presence({
+    presence = { matched = 0, total = 1, extra = 0, objects = {
+        { id = "w", yolo_classes = { "tube" }, status = "missing", match_kind = "yolo" },
+    } },
+    lacks = { w = { { label = "P06", kind = "text", why = "outside" } } },
+})).verdict.rows[1]
+t.eq(wrapped.lacks[1].why, "outside", "the live lacks reach a failed row")
+local held_ok = rt(verdict.from_presence({
+    presence = { matched = 1, total = 1, extra = 0, objects = {
+        { id = "w", yolo_classes = { "tube" }, status = "matched", match_kind = "yolo" },
+    } },
+    lacks = { w = { { label = "P06", kind = "text", why = "outside" } } },
+})).verdict.rows[1]
+t.is_nil(held_ok.lacks, "a matched row lacks nothing")
 
 -- Presence labels: text rows by their expected text, parts by class.
 local labels = rt(verdict.from_presence({ presence = { matched = 0, total = 3, extra = 0, objects = {

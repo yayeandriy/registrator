@@ -106,6 +106,21 @@ t.ok(nested.spatial and not nested.presence, "a nested spatial routine turns spa
 local empty = kit({ objects = {} })
 t.ok(not empty.presence and not empty.spatial, "an empty profile runs nothing")
 
+local function wrapped(comp)
+    local base = { id = "k", class_ids = { "c-duck" }, text_values = { "P06" } }
+    for k, v in pairs(comp) do
+        base[k] = v
+    end
+    local res = kit({ objects = { placement("w", { component_ids = { "k" } }) },
+                      components = { base }, classes = classes })
+    return res.expected[1].wrapper
+end
+t.eq(wrapped({ wrapper_class_id = "c-duck" }).label, "duck", "a class wrapper carries its class")
+t.eq(wrapped({ wrapper_text = "P06" }).text, "P06", "a text wrapper carries its text")
+t.is_nil(wrapped({ wrapper_class_id = "c-bolt" }), "a class the part lost is not a wrapper")
+t.is_nil(wrapped({ wrapper_text = "P06", class_ids = {} }), "a single detection has nothing to wrap")
+t.is_nil(wrapped({}), "no wrapper is set by default")
+
 local ok = pcall(kit, { op = "other" })
 t.ok(not ok, "an unknown op raises")
 

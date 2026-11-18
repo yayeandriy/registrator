@@ -6,7 +6,8 @@
 --                                     -- routines, x, y, width, height, rotation,
 --                                     -- is_anchor, loose_match, children
 --   components = { component... },   -- id, inspection_profile_id, name, class_ids,
---                                     -- text_values, symmetry, thresholds
+--                                     -- text_values, symmetry, thresholds,
+--                                     -- wrapper_class_id | wrapper_text
 --   classes    = { class... },       -- id, label, vision_model_id
 --   profile_id = "uuid",
 --   draft      = { component_id, thresholds } | nil  -- unsaved thresholds
@@ -14,7 +15,7 @@
 -- Output: {
 --   expected = { object... },  -- placement geometry plus yolo_classes,
 --                               -- yolo_class_refs, ocr_values, vision_model_id,
---                               -- symmetry, thresholds; children nested
+--                               -- symmetry, thresholds, wrapper; children nested
 --   catalog  = { component... }, -- this profile's components that can be seen:
 --                                 -- id, name, yolo_classes, ocr_values
 --   needles  = { "text"... },    -- OCR values the profile expects, tree order
@@ -200,11 +201,31 @@ local function symmetry_of(comps)
     return DEFAULT_SYMMETRY
 end
 
+-- The detection that stands for the whole part (`wrapper.lua`); only while it
+-- is still one of the part's detections and another one is left to hold.
+local function wrapper_of(comps, cls, texts)
+    local comp = comps[1]
+    if comp == nil or #cls + #texts < 2 then
+        return nil
+    end
+    local class_id = trim(comp.wrapper_class_id)
+    if class_id ~= "" then
+        local cl = by_id(cls, class_id)
+        return cl and { class_id = class_id, label = str(cl.label), vision_model_id = str(cl.vision_model_id) }
+    end
+    local text = trim(comp.wrapper_text)
+    if text ~= "" and contains(texts, text) then
+        return { text = text }
+    end
+    return nil
+end
+
 local function expected(objects, components, classes, draft)
     local out = {}
     for _, o in ipairs(list(objects)) do
         local comps = linked(o, components)
         local cls = linked_classes(comps, classes)
+        local texts = ocr_values(comps)
         out[#out + 1] = {
             id = str(o.id),
             profile_view_id = str(o.profile_view_id),
@@ -221,8 +242,9 @@ local function expected(objects, components, classes, draft)
             thresholds = thresholds_of(o, comps, draft),
             yolo_classes = yolo_classes(o, comps, cls, classes),
             yolo_class_refs = class_refs(cls),
-            ocr_values = ocr_values(comps),
+            ocr_values = texts,
             vision_model_id = vision_model(cls),
+            wrapper = wrapper_of(comps, cls, texts),
             children = expected(o.children, components, classes, draft),
         }
     end

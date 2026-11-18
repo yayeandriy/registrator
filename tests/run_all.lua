@@ -16,6 +16,7 @@ local suites = {
     "test_presence_latch.lua",
     "test_zone.lua",
     "test_live.lua",
+    "test_wrapper.lua",
     "test_inspect_view.lua",
     "test_prepare.lua",
     "test_kit.lua",

@@ -343,7 +343,7 @@ Frame slack is `0.02`. Exclusive assignment: each placement belongs to the small
 
 ## `live.lua`
 
-iOS `RegistratorRunner.process`. Host concatenates libraries as locals (`class_match`, `normalisator`, `matcher`, `registration`, `validation`, `layout`, `ruller`, `presence_validator`, `accumulator`, `zone`) plus `live_strip.lua` / `live_spatial.lua` / `live_window.lua` / `live_zoned.lua` / `live.lua`. `register_with` calls `registration.lua` with `{ "op": "register_with", "transform", "detections" }` — not a second inverse map.
+iOS `RegistratorRunner.process`. Host concatenates libraries as locals (`class_match`, `normalisator`, `matcher`, `registration`, `validation`, `layout`, `ruller`, `presence_validator`, `accumulator`, `zone`, `wrapper`) plus `live_strip.lua` / `live_spatial.lua` / `live_window.lua` / `live_zoned.lua` / `live.lua`. `register_with` calls `registration.lua` with `{ "op": "register_with", "transform", "detections" }` — not a second inverse map.
 
 **Input (inspect):**
 
@@ -367,6 +367,8 @@ iOS `RegistratorRunner.process`. Host concatenates libraries as locals (`class_m
 **Output:** `{ "presence", "spatial", "transform", "zone_transforms": [["<id>", { "tx", "ty", "a", "b", "c", "d", "px", "py" }]], "visible_zones": [{ "object_id", "member_ids" }], "anchor": "not_required"|"searching"|"found" }`. `searching` carries no rows.
 
 Other ops: `{ "op": "transform_agrees", "a", "b" }` → `{ "agrees" }`; `{ "op": "consensus_transform", "transforms" }` → `{ "transform" }`; `{ "op": "fill", "accumulated", "frames" }` → `{ "detections" }` (`registered_for_spatial_validation`).
+
+**Wrapper** (`wrapper.lua`, before Presence and Spatial): an expected object with `wrapper` (`{ "class_id", "label", "vision_model_id" }` or `{ "text" }`) and another detection besides is reduced to that wrapper. In every frame and in `presence_overlay`, a wrapper box counts only when each of the object's other classes and texts has a box with ≥ 60% of its area inside it; the YOLO boxes it holds are consumed, and a wrapper box missing one is dropped. Frame-local boxes only, so it holds with or without an anchor. The output carries `lacks`: `{ "<object id>": [{ "label", "kind": "class"|"text", "why": "unseen"|"outside" }] }` for each wrapped object whose wrapper is unseen, or whose best wrapper box (fewest misses) fails to hold a detection, from the Presence overlay or the last frame. `outside` is seen, but in no wrapper box.
 
 ## `inspect_view.lua`
 
@@ -396,10 +398,10 @@ Views are told apart by their tips: each view's anchors (`is_anchor`), or every 
 
 A profile's placements, the project's components and the class catalog, turned into live scoring inputs. Hosts call it whenever the profile, its components or a threshold draft change, not per detection.
 
-**Input:** `{ "objects": [placement], "components": [component], "classes": [class], "profile_id": "uuid", "draft": { "component_id", "thresholds": { "distance"?, "rotation"? } }? }`. A placement is the API's `ReferenceObjectDto` (`id`, `profile_view_id`, `name`, `component_ids`, `routines`, `x`, `y`, `width`, `height`, `rotation`, `is_anchor`, `loose_match`, `children`); a component is `ComponentDto` (`id`, `inspection_profile_id`, `name`, `class_ids`, `text_values`, `symmetry`, `thresholds`); a class is `ClassDto` (`id`, `label`, `vision_model_id`). Nulls read as empty.
+**Input:** `{ "objects": [placement], "components": [component], "classes": [class], "profile_id": "uuid", "draft": { "component_id", "thresholds": { "distance"?, "rotation"? } }? }`. A placement is the API's `ReferenceObjectDto` (`id`, `profile_view_id`, `name`, `component_ids`, `routines`, `x`, `y`, `width`, `height`, `rotation`, `is_anchor`, `loose_match`, `children`); a component is `ComponentDto` (`id`, `inspection_profile_id`, `name`, `class_ids`, `text_values`, `symmetry`, `thresholds`, `wrapper_class_id`, `wrapper_text`); a class is `ClassDto` (`id`, `label`, `vision_model_id`). Nulls read as empty.
 
 **Output:**
-- `expected`: one object per placement, children nested, with the placement geometry plus `yolo_classes` (labels of the linked classes, once each; a part with no class and no text uses the class whose label matches its name, else the name; a text-only part gets none), `yolo_class_refs` (`class_id`, `label`, `vision_model_id`), `ocr_values` (trimmed text, without blanks and unfilled formulas starting `=` or holding `{`), `vision_model_id` (first linked class with one), `symmetry` (first linked component's, else `"inf"`), `thresholds` (the draft for its component, else the first linked component's; omitted when unset).
+- `expected`: one object per placement, children nested, with the placement geometry plus `yolo_classes` (labels of the linked classes, once each; a part with no class and no text uses the class whose label matches its name, else the name; a text-only part gets none), `yolo_class_refs` (`class_id`, `label`, `vision_model_id`), `ocr_values` (trimmed text, without blanks and unfilled formulas starting `=` or holding `{`), `vision_model_id` (first linked class with one), `symmetry` (first linked component's, else `"inf"`), `thresholds` (the draft for its component, else the first linked component's; omitted when unset), `wrapper` (the first linked component's wrapper class `{ class_id, label, vision_model_id }` or text `{ text }`, only while it is one of the part's detections and the part has at least two; else omitted).
 - `catalog`: components of this profile or of none, that have a class label or a text: `id`, `name`, `yolo_classes`, `ocr_values` (every non-blank text).
 - `needles`: every `expected` OCR value once, in tree order.
 - `presence`: some placement asks for `presence_validate`. `spatial`: some placement asks for `spatial_validate`, or the profile has placements and asks for neither.
@@ -416,9 +418,9 @@ Every live-session decision a client used to make: the verdict it shows, OCR set
 
 | op | args | result |
 |----|------|--------|
-| `verdict.from_presence` | `presence` (Presence result) | `{ verdict }` |
-| `verdict.from_spatial` | `spatial` (Validation result), `hold` | `{ verdict, objects, hold }` — a matched row survives one soft fail |
-| `verdict.merge` | `presence?`, `spatial?`, `ocr_labels`, `needles`, `ocr` (`ocr.progress` args minus rows/needles) | `{ verdict, ocr }` — one row per object (also Presence-only: a part's class and text checks fold into one) by status rank, a part row winning a tie over its text row; OCR extras out, unsettled text misses `pending` |
+| `verdict.from_presence` | `presence` (Presence result), `lacks?` (live) | `{ verdict }` — a failed row of an object in `lacks` carries them |
+| `verdict.from_spatial` | `spatial` (Validation result), `hold`, `lacks?` | `{ verdict, objects, hold }` — a matched row survives one soft fail |
+| `verdict.merge` | `presence?`, `spatial?`, `ocr_labels`, `needles`, `ocr` (`ocr.progress` args minus rows/needles) | `{ verdict, ocr }` — one row per object (also Presence-only: a part's class and text checks fold into one) by status rank, a part row winning a tie over its text row; OCR extras out, unsettled text misses `pending`. A failed row carries `lacks`: those its checks brought, else each missed check of a part whose checks name different detections (`why: "unseen"`) |
 | `ocr.progress` | `wants_ocr`, `engine_off`, `backend_ran`, `rows`, `needles`, `read_labels`, `box_ticks`, `empty_ticks` | `{ ready, tick_finished, has_match, reads_expected, read_hits, box_ticks, empty_ticks }` |
 | `ocr.drop_stale` | `frames`, `live_labels`, `needles`, `ocr_ticked` | `{ frames }` |
 | `ocr.text_reads` | `mode` (`frame` · `window` · `view`), `reads`, `frames`, `pool`, `needles` | `{ reads, pool }` — the reads Presence scores: `window` adds expected text read in the window's frames, `view` adds expected text kept in `pool` since the view began. The host keeps `pool` and empties it when the view changes |

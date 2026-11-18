@@ -25,6 +25,19 @@ local function rewrite_dets(dets)
     return dets
 end
 
+local function wrap_frames(expected, frames)
+    local out = {}
+    for i, frame in ipairs(frames) do
+        local f = {}
+        for k, v in pairs(frame) do
+            f[k] = v
+        end
+        f.detections = wrapper.detections(expected, frame.detections)
+        out[i] = f
+    end
+    return out
+end
+
 local function run_presence(expected, frames, opts, spatial_expected)
     local latest
     if opts.presence_overlay then
@@ -85,6 +98,13 @@ local function run_live_inspect(input)
     if expected_has_ocr(expected) then
         frames = rewrite_frames(frames)
     end
+    local last = frames[#frames]
+    local lacks = wrapper.lacks(expected, opts.presence_overlay or (last and last.detections))
+    frames = wrap_frames(expected, frames)
+    if opts.presence_overlay then
+        opts.presence_overlay = wrapper.detections(expected, opts.presence_overlay)
+    end
+    expected = wrapper.expected(expected)
     local spatial_expected = spatial_only_tree(expected)
     local presence = nil
     if opts.presence then
@@ -101,6 +121,7 @@ local function run_live_inspect(input)
                 zone_transforms = {},
                 visible_zones = {},
                 anchor = anchor,
+                lacks = lacks,
             }
         end
         local result, t, zt, vz, seen = run_spatial_window(spatial_expected, expected, frames, opts)
@@ -134,6 +155,7 @@ local function run_live_inspect(input)
         zone_transforms = zone_transforms,
         visible_zones = visible_zones,
         anchor = anchor,
+        lacks = lacks,
     }
 end
 
