@@ -376,6 +376,8 @@ Settle which ProfileView to score.
 
 **Output:** `{ "view_id" }` / `{ "objects", "view_id", "awaiting_view" }` / `{ "keep" }` / `{ "map" }` / `{ "ids" }`.
 
+Views are told apart by their tips: each view's anchors (`is_anchor`), or every placement of a view with no anchor whose placements are all Presence (`routines` holds `presence_validate` and not `spatial_validate`). `settle`, `collect_anchors` and `unique_anchor_classes` read only tips, so objects must carry `routines`.
+
 **`filter_detections`** — which detections the scoped view keeps, one call per batch.
 
 **Input:** `{ "op": "filter_detections", "objects"?, "view_class_ids"?, "view_models"?, "catalog_keys": ["<class label>"], "detections": [{ "kind", "label", "class_id"?, "vision_model_id"? }] }`. Without `view_class_ids` / `view_models` the refs come from `objects`.
@@ -416,7 +418,7 @@ Every live-session decision a client used to make: the verdict it shows, OCR set
 |----|------|--------|
 | `verdict.from_presence` | `presence` (Presence result) | `{ verdict }` |
 | `verdict.from_spatial` | `spatial` (Validation result), `hold` | `{ verdict, objects, hold }` — a matched row survives one soft fail |
-| `verdict.merge` | `presence?`, `spatial?`, `ocr_labels`, `needles`, `ocr` (`ocr.progress` args minus rows/needles) | `{ verdict, ocr }` — union by status rank, OCR extras out, unsettled text misses `pending` |
+| `verdict.merge` | `presence?`, `spatial?`, `ocr_labels`, `needles`, `ocr` (`ocr.progress` args minus rows/needles) | `{ verdict, ocr }` — one row per object (also Presence-only: a part's class and text checks fold into one) by status rank, a part row winning a tie over its text row; OCR extras out, unsettled text misses `pending` |
 | `ocr.progress` | `wants_ocr`, `engine_off`, `backend_ran`, `rows`, `needles`, `read_labels`, `box_ticks`, `empty_ticks` | `{ ready, tick_finished, has_match, reads_expected, read_hits, box_ticks, empty_ticks }` |
 | `ocr.drop_stale` | `frames`, `live_labels`, `needles`, `ocr_ticked` | `{ frames }` |
 | `ocr.text_reads` | `mode` (`frame` · `window` · `view`), `reads`, `frames`, `pool`, `needles` | `{ reads, pool }` — the reads Presence scores: `window` adds expected text read in the window's frames, `view` adds expected text kept in `pool` since the view began. The host keeps `pool` and empties it when the view changes |

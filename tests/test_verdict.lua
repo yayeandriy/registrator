@@ -127,6 +127,29 @@ t.eq(union.verdict.total, 2, "union total")
 t.eq(union.verdict.matched, 2, "union matched")
 t.eq(#union.verdict.rows, 2, "one row per object")
 
+-- A part checked by class and text is one row, in a Presence-only view too.
+local both = rt(verdict.merge({
+    presence = { result = "fail", matched = 1, total = 2, incorrect = 0, missing = 1, extra = 0,
+        complete = false, no_expectations = false,
+        rows = { { object_id = "p", label = "tube", status = "matched", match_kind = "yolo" },
+                 { object_id = "p", label = "P06", status = "missing", match_kind = "ocr" } } },
+    needles = { "P06" },
+    ocr = { wants_ocr = false },
+}))
+t.eq(#both.verdict.rows, 1, "one row for the part")
+t.eq(both.verdict.rows[1].match_kind, "ocr", "the failed text check stands for it")
+t.eq(both.verdict.result, "fail", "the unread text fails it")
+local lost = rt(verdict.merge({
+    presence = { result = "fail", matched = 0, total = 2, incorrect = 0, missing = 2, extra = 0,
+        complete = false, no_expectations = false,
+        rows = { { object_id = "p", label = "tube", status = "missing", match_kind = "yolo" },
+                 { object_id = "p", label = "P06", status = "missing", match_kind = "ocr" } } },
+    needles = { "P06" },
+    ocr = { wants_ocr = true, backend_ran = false, read_labels = {} },
+}))
+t.eq(lost.verdict.rows[1].match_kind, "yolo", "a missing part outranks its unread text")
+t.eq(lost.verdict.result, "fail", "and is not held as pending")
+
 -- Presence labels: text rows by their expected text, parts by class.
 local labels = rt(verdict.from_presence({ presence = { matched = 0, total = 3, extra = 0, objects = {
     { id = "a", yolo_classes = {}, ocr_values = { "26050D" }, status = "missing", match_kind = "ocr" },

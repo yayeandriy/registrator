@@ -203,6 +203,20 @@ t.eq(n, 2, "one label on two models is two classes")
 t.eq(settle(models, { { label = "matches", confidence = 0.9, class_id = CB, vision_model_id = MB } }), B,
     "the stamped class settles its own view")
 
+-- A Presence-only view has no anchor: its own placements tell it apart.
+local cap = obj(B, "cap", false)
+cap.routines = { "presence_validate" }
+local mixed = { obj(A, "front-qr", true), obj(A, "screw", false), cap }
+t.eq(settle(mixed, { { label = "cap", confidence = 0.8 } }), B, "a view without an anchor settles on its placements")
+t.eq(settle(mixed, { { label = "screw", confidence = 0.8 } }), nil, "an anchored view's other placements still settle nothing")
+local tips = round(inspect_view({ op = "collect_anchors", objects = mixed, completed = {} })).objects
+t.eq(#tips, 2, "the waiting set holds the anchor and the anchorless view's placement")
+t.eq(round(inspect_view({ op = "unique_anchor_classes", objects = mixed })).map["cap"], B, "its class is unique to it")
+local spatial_cap = obj(B, "cap", false)
+spatial_cap.routines = { "presence_validate", "spatial_validate" }
+t.eq(settle({ obj(A, "front-qr", true), spatial_cap }, { { label = "cap", confidence = 0.8 } }), nil,
+    "a view that only lacks its anchor settles nothing")
+
 if not t.summary("inspect_view") then
     os.exit(1)
 end

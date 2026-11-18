@@ -44,8 +44,8 @@ local SOFT_FAIL = {
     mispositioned_misrotated = true,
 }
 
--- Pose failures beat missing, missing beats matched, when Presence and
--- Spatial both report one object.
+-- Pose failures beat missing, missing beats matched, when several checks
+-- (Presence, Spatial, a part's class and its text) report one object.
 local STATUS_RANK = {
     matched = 0,
     missing = 1,
@@ -213,10 +213,12 @@ local function union(presence, spatial)
             key = "anon:" .. unnamed
         end
         local existing = by_key[key]
+        local rank, known = STATUS_RANK[row.status] or 0, existing and (STATUS_RANK[existing.status] or 0)
         if existing == nil then
             order[#order + 1] = key
             by_key[key] = row
-        elseif (STATUS_RANK[row.status] or 0) >= (STATUS_RANK[existing.status] or 0) then
+        elseif rank > known or (rank == known and not (is_ocr_kind(row.match_kind) and not is_ocr_kind(existing.match_kind))) then
+            -- On a tie the part's row stays, so a held text miss never hides a part miss.
             by_key[key] = row
         end
     end
@@ -293,17 +295,14 @@ local function hold_unsettled_ocr(v, needles)
     return v
 end
 
+-- One row per object, however many checks report it.
 function verdict.merge(input)
     local p, s = input.presence, input.spatial
-    local v
-    if p and s then
-        v = union(p, s)
-    else
-        v = p or s
-    end
-    if v == nil then
+    if p == nil and s == nil then
         return {}
     end
+    local none = { no_expectations = true, extra = 0, rows = {} }
+    local v = union(p or none, s or none)
     v.rows = v.rows or {}
     v = strip_ocr_extras(v, input.ocr_labels)
     local ocr_in = input.ocr or {}

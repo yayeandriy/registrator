@@ -3,8 +3,8 @@
 -- Identity is class_id, else (model, label), else trimmed lowercase label.
 -- Standalone: `local inspect_view = dofile("inspect_view.lua")`.
 --
--- Input: { op, objects, detections, latched, completed,
---          kind, class_id, vision_model_id, view_class_ids, view_models }
+-- Input: { op, objects, detections, latched, completed, kind, class_id,
+--          vision_model_id, view_class_ids, view_models }
 -- ops: settle | scope | keep_detection | filter_detections |
 --      unique_anchor_classes | collect_anchors | view_model_ids | view_class_ids
 
@@ -89,16 +89,34 @@ local function copy_obj(o)
     return c
 end
 
-local function walk_collect_anchors(objects, completed, out)
-    for _, object in ipairs(objects or {}) do
-        local vid = tostring(object.profile_view_id or NIL_ID)
-        if object.is_anchor and not completed[vid] then
-            local row = copy_obj(object)
-            row.children = {}
-            out[#out + 1] = row
-        end
-        walk_collect_anchors(object.children, completed, out)
+local function presence_only(o)
+    local presence, spatial = false, false
+    for _, r in ipairs(o.routines or {}) do
+        presence, spatial = presence or r == "presence_validate", spatial or r == "spatial_validate"
     end
+    return presence and not spatial
+end
+
+-- The placements that tell views apart: each view's anchors, or every
+-- placement of a view with no anchor whose placements are all Presence.
+local function view_tips(objects)
+    local open, all = {}, {}
+    local function walk(nodes)
+        for _, o in ipairs(nodes or {}) do
+            all[#all + 1] = o
+            local vid = tostring(o.profile_view_id or NIL_ID)
+            open[vid] = open[vid] ~= false and not o.is_anchor and presence_only(o)
+            walk(o.children)
+        end
+    end
+    walk(objects)
+    local tips = {}
+    for _, o in ipairs(all) do
+        if o.is_anchor or (not is_nil_id(o.profile_view_id) and open[tostring(o.profile_view_id)]) then
+            tips[#tips + 1] = o
+        end
+    end
+    return tips
 end
 
 local function completed_set(list)
@@ -110,8 +128,14 @@ local function completed_set(list)
 end
 
 local function collect_anchors_excluding(objects, completed)
-    local out = {}
-    walk_collect_anchors(objects, completed_set(completed), out)
+    local done, out = completed_set(completed), {}
+    for _, object in ipairs(view_tips(objects)) do
+        if not done[tostring(object.profile_view_id or NIL_ID)] then
+            local row = copy_obj(object)
+            row.children = {}
+            out[#out + 1] = row
+        end
+    end
     return out
 end
 
@@ -138,14 +162,13 @@ local function placement_view_ids(objects)
     return id_list(ids), ids
 end
 
-local function walk_completed_anchor_keys(objects, completed, keys)
-    for _, object in ipairs(objects or {}) do
-        if object.is_anchor and completed[tostring(object.profile_view_id or "")] then
+local function completed_tip_keys(tips, completed, keys)
+    for _, object in ipairs(tips) do
+        if completed[tostring(object.profile_view_id or "")] then
             for _, k in ipairs(anchor_class_keys(object)) do
                 keys[k] = true
             end
         end
-        walk_completed_anchor_keys(object.children, completed, keys)
     end
 end
 
@@ -157,9 +180,6 @@ local function pick_scored_view(scores, latched)
         elseif math.abs(score - best_score) < 1e-9 then
             ties = ties + 1
         end
-    end
-    if best_id == nil then
-        return nil
     end
     if ties > 1 then
         if latched and scores[latched] then
@@ -179,10 +199,10 @@ local function contains(list, value)
     return false
 end
 
-local function walk_anchor_view_scores(objects, hits, completed, processed, identity_scores, label_scores)
-    for _, object in ipairs(objects or {}) do
+local function tip_view_scores(tips, hits, completed, processed, identity_scores, label_scores)
+    for _, object in ipairs(tips) do
         local vid = tostring(object.profile_view_id or NIL_ID)
-        if object.is_anchor and not is_nil_id(object.profile_view_id) and not completed[vid] then
+        if not is_nil_id(object.profile_view_id) and not completed[vid] then
             local keys = {}
             for _, key in ipairs(anchor_class_keys(object)) do
                 if not processed[key] then
@@ -191,35 +211,31 @@ local function walk_anchor_view_scores(objects, hits, completed, processed, iden
             end
             for _, hit in ipairs(hits or {}) do
                 local identity = class_identity(hit.class_id, hit.vision_model_id, hit.label)
-                local identity_hit = identity ~= "" and contains(keys, identity)
                 local label = normalize_class(hit.label)
-                local label_hit = label ~= "" and contains(keys, label)
                 local conf = math.max(tonumber(hit.confidence) or 0, 0.01)
-                if identity_hit then
+                if identity ~= "" and contains(keys, identity) then
                     identity_scores[vid] = (identity_scores[vid] or 0) + conf
-                elseif label_hit then
+                elseif label ~= "" and contains(keys, label) then
                     label_scores[vid] = (label_scores[vid] or 0) + conf
                 end
             end
         end
-        walk_anchor_view_scores(object.children, hits, completed, processed, identity_scores, label_scores)
     end
 end
 
 local function settle(objects, detections, latched, completed_list)
     local list, idset = placement_view_ids(objects)
     if #list <= 1 then
-        local id = list[1] or latched
-        return id
+        return list[1] or latched
     end
     local completed = completed_set(completed_list)
     if latched and completed[tostring(latched)] then
         latched = nil
     end
-    local processed = {}
-    walk_completed_anchor_keys(objects, completed, processed)
+    local tips, processed = view_tips(objects), {}
+    completed_tip_keys(tips, completed, processed)
     local identity_scores, label_scores = {}, {}
-    walk_anchor_view_scores(objects, detections, completed, processed, identity_scores, label_scores)
+    tip_view_scores(tips, detections, completed, processed, identity_scores, label_scores)
     return pick_scored_view(identity_scores, latched)
         or pick_scored_view(label_scores, latched)
         or (latched and idset[tostring(latched)] and latched or nil)
@@ -241,18 +257,14 @@ local function scope(objects, detections, latched, completed_list)
         return { objects = objects, awaiting_view = false }
     end
     if #list == 1 then
-        local id = list[1]
-        return { objects = filter_view(objects, id), view_id = id, awaiting_view = false }
+        return { objects = filter_view(objects, list[1]), view_id = list[1], awaiting_view = false }
     end
     local completed = completed_set(completed_list)
     local id = settle(objects, detections, latched, completed_list)
     if id and not is_nil_id(id) and not completed[tostring(id)] then
         return { objects = filter_view(objects, id), view_id = id, awaiting_view = false }
     end
-    return {
-        objects = collect_anchors_excluding(objects, completed_list),
-        awaiting_view = true,
-    }
+    return { objects = collect_anchors_excluding(objects, completed_list), awaiting_view = true }
 end
 
 local function id_set(list)
@@ -284,34 +296,22 @@ local function keeper(view_class_ids, view_models)
     end
 end
 
-local function walk_anchor_class_counts(objects, counts)
-    for _, object in ipairs(objects or {}) do
-        if object.is_anchor then
-            for _, key in ipairs(anchor_class_keys(object)) do
-                counts[key] = (counts[key] or 0) + 1
-            end
-        end
-        walk_anchor_class_counts(object.children, counts)
-    end
-end
-
 local function unique_view_anchor_classes(objects)
-    local counts = {}
-    walk_anchor_class_counts(objects, counts)
-    local map = {}
-    local function walk(nodes)
-        for _, object in ipairs(nodes or {}) do
-            if object.is_anchor and not is_nil_id(object.profile_view_id) then
-                for _, key in ipairs(anchor_class_keys(object)) do
-                    if counts[key] == 1 then
-                        map[key] = tostring(object.profile_view_id)
-                    end
+    local tips, counts, map = view_tips(objects), {}, {}
+    for _, object in ipairs(tips) do
+        for _, key in ipairs(anchor_class_keys(object)) do
+            counts[key] = (counts[key] or 0) + 1
+        end
+    end
+    for _, object in ipairs(tips) do
+        if not is_nil_id(object.profile_view_id) then
+            for _, key in ipairs(anchor_class_keys(object)) do
+                if counts[key] == 1 then
+                    map[key] = tostring(object.profile_view_id)
                 end
             end
-            walk(object.children)
         end
     end
-    walk(objects)
     return map
 end
 
