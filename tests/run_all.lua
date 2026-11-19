@@ -13,6 +13,7 @@ local suites = {
     "test_layout.lua",
     "test_accumulator.lua",
     "test_presence_validator.lua",
+    "test_presence_anywhere.lua",
     "test_presence_joint_read.lua",
     "test_presence_latch.lua",
     "test_zone.lua",

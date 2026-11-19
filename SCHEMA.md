@@ -175,7 +175,7 @@ Content / presence check — **no spatial registration**. Used by the Constructo
 ```
 
 - Participates when `presence: true` **or** non-empty `ocr_values` (same membership as Constructor Presence rail).
-- Detection coordinates gate OCR when the object also expects YOLO (center of OCR box inside the AABB union of the object's claimed YOLO class boxes).
+- Location-free: each class needs a box and each text a read anywhere in the frame; how a part's detections sit against each other matters only through a wrapper (`wrapper.lua`). Each box and read counts for one part; parts lacking the fewest detections claim first.
 - `kind`: `"ocr"` / `ocr:*` → OCR string; anything else (including omitted) → YOLO class label.
 - `catalog` / `opts` are both optional and off by default (zero behavior change for any caller that omits them) — see "Catalog-anchored extras" below.
 
@@ -183,8 +183,8 @@ Content / presence check — **no spatial registration**. Used by the Constructo
 
 | Check | When | Rule |
 |-------|------|------|
-| OCR | non-empty `ocr_values` | One required row per expected string (AND). Loose text match. When the object also has a YOLO expectation, the OCR detection center must lie inside the union of that object's assigned instance boxes. |
-| YOLO | `presence: true`, non-empty `yolo_classes`, and a `vision_model_id` | Full class-set **instance** (one box per listed class, clustered by proximity). Objects that share the same class set compete; assignment prefers the instance whose interior OCR best matches (unique needles outweigh shared text). |
+| OCR | non-empty `ocr_values` | One required row per expected string (AND). Loose text match, anywhere in the frame. |
+| YOLO | `presence: true`, non-empty `yolo_classes`, and a `vision_model_id` | One box per listed class, anywhere in the frame. Objects that share a class take boxes in order of how few of their detections are missing, so the one whose text is read wins. |
 
 **Extras** (modality-scoped):
 - Unclaimed YOLO boxes when at least one YOLO check ran
@@ -196,15 +196,14 @@ Off by default. When a host passes `catalog` (every project component, not
 just the active profile — same `yolo_classes`/`ocr_values` shape as an
 expected object, plus `name`) and sets `opts.anchor_extras = true`,
 unclaimed YOLO boxes are clustered into full-class-set instances per
-catalog signature — the same proximity clustering used for competing
-profile objects, i.e. "anchor a class by the other detections around it in
-the same frame" — and named from the catalog via interior OCR:
+catalog signature by proximity, i.e. "anchor a class by the other
+detections around it in the same frame" — and named from the catalog via interior OCR:
 
 - A signature owned by exactly **one** catalog component is unambiguous —
   named without needing OCR at all.
 - A signature shared by several components (e.g. two stamps that only
   differ by a printed code) requires OCR to disambiguate, using the same
-  unique-vs-shared-needle rule as competing profile objects. No OCR yet →
+  unique-vs-shared-needle rule (unique needles outweigh shared ones). No OCR yet →
   the instance is still emitted (never silently dropped) with
   `matched_label: null`; `presence_latch.lua` keeps the sticky name once
   OCR confirms it, even if a later tick's OCR briefly misses again.

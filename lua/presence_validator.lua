@@ -13,25 +13,27 @@
 --   - non-empty `ocr_values` (text-only parts may seed OCR with Presence Off)
 --
 -- Matching rules (modalities are independent — never cross-fallback):
+--   - Location-free: a part counts once each of its classes has a box and
+--     each of its texts a read, wherever they lie in the frame, for any mix
+--     (class + text, class + class, more than two). Where its parts sit
+--     against each other matters only through a wrapper (`wrapper.lua`,
+--     run before this script).
 --   - OCR: non-empty `ocr_values` → `matcher.lua` (expected text inside
 --     any found string after `normalisator.lua`). Digit-only needles
 --     (e.g. year "2020") also match when several short OCR fragments
---     inside the gate concatenate (left-to-right) to contain the needle —
---     Vision often splits arched stamp digits. **Every** expected string is
---     required (AND): one OCR result row per needle.
+--     concatenate (left-to-right) to contain the needle — Vision often
+--     splits arched stamp digits. **Every** expected string is required
+--     (AND): one OCR result row per needle.
 --   - YOLO: `presence == true`, non-empty `yolo_classes`, **and** a
---     `vision_model_id` → exact `label` match on a non-OCR detection.
---     An object needs a full **instance** (one box per listed class, clustered
---     by proximity). Objects that share the same class set compete for
---     instances; assignment prefers the instance whose interior OCR best
---     matches that object's texts (unique needles outweigh shared ones like
---     a common year). Slug-only legacy class with YOLO model None is ignored.
---   - When both OCR and a real YOLO expectation apply, **both** checks run
---     and produce YOLO + per-needle OCR rows (e.g. stamp = class + texts).
---     OCR hits must also lie **inside** the object's assigned instance union
---     (OCR detection center). No instance → YOLO + OCR missing. Text-only
---     objects (no YOLO expectation) skip the spatial gate.
---
+--     `vision_model_id` → exact `label` match on a non-OCR detection, one
+--     box per listed class. Slug-only legacy class with YOLO model None is
+--     ignored.
+--   - When both apply, both checks run: a YOLO row plus one OCR row per
+--     needle (e.g. stamp = class + texts).
+--   - Each box and each read counts for one part. Parts that lack the
+--     fewest of their detections claim first, so a part whose text is in
+--     the frame takes the shared-class box before one whose text is not.
+
 -- Extras (YOLO-only):
 --   - Unclaimed YOLO boxes, only if at least one YOLO check ran.
 --   - Unused OCR is never EXTRA (hosts filter to expected needles; noise
@@ -48,15 +50,14 @@
 --   host also passes `catalog` (every project component, not just the
 --   active profile — same shape as an expected object's class/OCR fields)
 --   and sets `opts.anchor_extras = true`, unclaimed YOLO boxes are
---   clustered into full-class-set instances per catalog signature (same
---   proximity clustering `build_class_instances` uses for competing
---   profile objects — "anchor a class by the other detections around it
---   in the same frame") and named from the catalog via interior OCR:
+--   clustered by proximity into full-class-set instances per catalog
+--   signature (`build_class_instances` — "anchor a class by the other
+--   detections around it in the same frame") and named from the catalog via interior OCR:
 --     - A signature with exactly one catalog component is unambiguous —
 --       named without needing OCR at all.
 --     - A signature shared by several components (e.g. two stamps that
 --       only differ by printed code) requires OCR to disambiguate, same
---       unique-vs-shared-needle rule as competing profile objects. No
+--       unique-vs-shared-needle rule (unique needles outweigh shared ones). No
 --       OCR yet → still emitted (never silently dropped — see UI
 --       constitution) with `matched_label = nil`; `presence_latch.lua`
 --       keeps the sticky name once OCR confirms it even if a later tick's
@@ -637,76 +638,6 @@ local function needle_owners(group, needle)
     return n
 end
 
-local function score_instance_for_object(object, instance, ocr_detections, group)
-    local region = pad_aabb(union_aabb(instance.boxes), OCR_GATE_PAD)
-    if not region then
-        return 0
-    end
-    local ax, ay = aabb_center(region)
-    local score = 0
-    local required = 0
-    local found = 0
-    local unique_hit = false
-    for _, needle in ipairs(object.ocr_values or {}) do
-        if normalize_alnum(needle) ~= "" then
-            required = required + 1
-            if find_ocr(ocr_detections, needle, region, nil, ax, ay) then
-                found = found + 1
-                if needle_owners(group, needle) == 1 then
-                    unique_hit = true
-                    score = score + 10
-                else
-                    score = score + 1
-                end
-            end
-        end
-    end
-    -- Shared text alone (e.g. year "2020") must not claim a sibling object.
-    -- Assign only when every needle hits, or at least one object-unique needle.
-    if required > 0 and found < required and not unique_hit then
-        return 0
-    end
-    return score
-end
-
--- Assign each competing object at most one instance (best OCR fit wins).
-local function assign_instances(group, instances, ocr_detections)
-    local pairs = {}
-    for oi, object in ipairs(group) do
-        for ii, instance in ipairs(instances) do
-            local score = score_instance_for_object(object, instance, ocr_detections, group)
-            -- Objects with OCR need a positive score; class-only objects accept 0.
-            local has_ocr = #(object.ocr_values or {}) > 0
-            if (not has_ocr) or score > 0 then
-                table.insert(pairs, {
-                    oi = oi,
-                    ii = ii,
-                    score = score,
-                    object = object,
-                    instance = instance,
-                })
-            end
-        end
-    end
-    table.sort(pairs, function(a, b)
-        if a.score ~= b.score then
-            return a.score > b.score
-        end
-        return a.oi < b.oi
-    end)
-    local used_obj = {}
-    local used_inst = {}
-    local assigned = {}
-    for _, p in ipairs(pairs) do
-        if not used_obj[p.oi] and not used_inst[p.ii] then
-            used_obj[p.oi] = true
-            used_inst[p.ii] = true
-            assigned[p.object.id] = p.instance
-        end
-    end
-    return assigned
-end
-
 local function copy_detection(d)
     return {
         label = d.label,
@@ -726,18 +657,6 @@ local function object_classes(o)
         return class_match.expected_list(o)
     end
     return o.yolo_classes or {}
-end
-
-local function object_class_sig(o)
-    if type(class_match) == "table" and type(class_match.key) == "function" then
-        local keys = {}
-        for _, r in ipairs(object_classes(o)) do
-            table.insert(keys, class_match.key(r))
-        end
-        table.sort(keys)
-        return table.concat(keys, "\0")
-    end
-    return class_signature(o.yolo_classes or {})
 end
 
 local function detection_class_key(d)
@@ -774,198 +693,61 @@ local function push_result(objects, o, status, matched_label, matched_confidence
     })
 end
 
-local function ocr_gate_region(yolo_boxes)
-    if #yolo_boxes == 0 then
-        return { x1 = 0, y1 = 0, x2 = -1, y2 = -1 }
-    end
-    return pad_aabb(union_aabb(yolo_boxes), OCR_GATE_PAD)
+local function has_yolo(o)
+    return #(o.yolo_classes or {}) > 0 and has_vision_model(o)
 end
 
--- Solo / text-only emit. Optional `claimed_ocr` shares exclusivity with siblings.
-local function emit_object_results(
-    objects,
-    matched_count,
-    o,
-    yolo_boxes,
-    ocr_detections,
-    expect_yolo_flag,
-    expect_ocr_flag,
-    claimed_ocr
-)
-    local matched = matched_count
-    local expect_yolo = expect_yolo_flag
-    local expect_ocr = expect_ocr_flag
-    local ocr_claimed = claimed_ocr or {}
-    local ocr_values = o.ocr_values or {}
-    local has_ocr = #ocr_values > 0
-    local has_yolo = #(o.yolo_classes or {}) > 0 and has_vision_model(o)
+-- How many of `o`'s classes have no box and texts no read, with every
+-- detection free. Parts closest to whole claim first.
+local function lacking(o, detections, ocr_detections)
+    local n = 0
+    if o.presence and has_yolo(o) then
+        for _, class in ipairs(object_classes(o)) do
+            if not find_yolo(detections, class, {}) then
+                n = n + 1
+            end
+        end
+    end
+    for _, needle in ipairs(o.ocr_values or {}) do
+        if normalize_alnum(needle) ~= "" and not find_ocr(ocr_detections, needle, nil, nil) then
+            n = n + 1
+        end
+    end
+    return n
+end
 
-    if o.presence and has_yolo then
+-- One part's rows: a box for every class and a read for every text, anywhere
+-- in the frame and none a part before it claimed.
+local function part_results(o, detections, ocr_detections, claimed, claimed_ocr)
+    local rows, matched, expect_yolo, expect_ocr = {}, 0, false, false
+    if o.presence and has_yolo(o) then
         expect_yolo = true
-        if #yolo_boxes > 0 then
-            local hit = yolo_boxes[1]
-            push_result(objects, o, "matched", hit.label, hit.confidence, "yolo", nil)
+        local boxes = collect_yolo_boxes(detections, object_classes(o), claimed)
+        if #boxes > 0 then
+            push_result(rows, o, "matched", boxes[1].label, boxes[1].confidence, "yolo", nil)
             matched = matched + 1
         else
-            push_result(objects, o, "missing", nil, nil, "yolo", nil)
+            push_result(rows, o, "missing", nil, nil, "yolo", nil)
         end
     end
-
-    local ocr_region = nil
-    if o.presence and has_yolo then
-        ocr_region = ocr_gate_region(yolo_boxes)
-    end
-
-    if has_ocr then
-        expect_ocr = true
-        local ax, ay = aabb_center(ocr_region)
-        for _, needle in ipairs(ocr_values) do
-            if normalize_alnum(needle) ~= "" then
-                local hit, claim_idxs =
-                    find_ocr(ocr_detections, needle, ocr_region, ocr_claimed, ax, ay)
-                if hit then
-                    claim_ocr_hits(ocr_claimed, hit, claim_idxs)
-                    push_result(objects, o, "matched", hit.read or hit.label, hit.confidence, "ocr", needle)
-                    matched = matched + 1
-                else
-                    push_result(objects, o, "missing", nil, nil, "ocr", needle)
-                end
-            end
-        end
-    end
-    return matched, expect_yolo, expect_ocr
-end
-
--- Competing same-class objects: unique OCR first, then shared needles by
--- nearest instance. OCR stays gated to each instance's YOLO pad (no growth).
-local function emit_competing_group(
-    objects,
-    matched_count,
-    group,
-    assigned,
-    ocr_detections,
-    expect_yolo_flag,
-    expect_ocr_flag,
-    claimed_yolo
-)
-    local matched = matched_count
-    local expect_yolo = expect_yolo_flag
-    local expect_ocr = expect_ocr_flag
-    local claimed_ocr = {}
-    local states = {}
-
-    for _, o in ipairs(group) do
-        local instance = assigned[o.id]
-        local yolo_boxes = {}
-        if instance then
-            yolo_boxes = instance.boxes
-            for _, b in ipairs(yolo_boxes) do
-                claimed_yolo[b._idx] = true
-            end
-        end
-        local has_yolo = #(o.yolo_classes or {}) > 0 and has_vision_model(o)
-        if o.presence and has_yolo then
-            expect_yolo = true
-            if #yolo_boxes > 0 then
-                local hit = yolo_boxes[1]
-                push_result(objects, o, "matched", hit.label, hit.confidence, "yolo", nil)
+    for _, needle in ipairs(o.ocr_values or {}) do
+        if normalize_alnum(needle) ~= "" then
+            expect_ocr = true
+            local hit, claim_idxs = find_ocr(ocr_detections, needle, nil, claimed_ocr)
+            if hit then
+                claim_ocr_hits(claimed_ocr, hit, claim_idxs)
+                push_result(rows, o, "matched", hit.read or hit.label, hit.confidence, "ocr", needle)
                 matched = matched + 1
             else
-                push_result(objects, o, "missing", nil, nil, "yolo", nil)
-            end
-        end
-        local region = nil
-        if o.presence and has_yolo then
-            region = ocr_gate_region(yolo_boxes)
-        end
-        table.insert(states, {
-            o = o,
-            region = region,
-            pending_shared = {},
-        })
-    end
-
-    -- Pass 1: object-unique needles (P06 / X04) — claim + expand region.
-    for _, st in ipairs(states) do
-        local o = st.o
-        local ax, ay = aabb_center(st.region)
-        for _, needle in ipairs(o.ocr_values or {}) do
-            if normalize_alnum(needle) ~= "" then
-                expect_ocr = true
-                if needle_owners(group, needle) == 1 then
-                    local hit, claim_idxs =
-                        find_ocr(ocr_detections, needle, st.region, claimed_ocr, ax, ay)
-                    if hit then
-                        claim_ocr_hits(claimed_ocr, hit, claim_idxs)
-                        push_result(objects, o, "matched", hit.read or hit.label, hit.confidence, "ocr", needle)
-                        matched = matched + 1
-                    else
-                        push_result(objects, o, "missing", nil, nil, "ocr", needle)
-                    end
-                else
-                    table.insert(st.pending_shared, needle)
-                end
+                push_result(rows, o, "missing", nil, nil, "ocr", needle)
             end
         end
     end
-
-    -- Pass 2: shared needles (incl. digit assembly for arched "2020").
-    local filled = {}
-    local progress = true
-    while progress do
-        progress = false
-        local best = nil
-        for si, st in ipairs(states) do
-            local ax, ay = aabb_center(st.region)
-            for _, needle in ipairs(st.pending_shared) do
-                local key = si .. "\0" .. normalize_alnum(needle)
-                if not filled[key] then
-                    local hit, claim_idxs =
-                        find_ocr(ocr_detections, needle, st.region, claimed_ocr, ax, ay)
-                    if hit then
-                        local cx, cy = detection_center(hit)
-                        local dx, dy = cx - ax, cy - ay
-                        local dist = dx * dx + dy * dy
-                        if not best or dist < best.dist then
-                            best = {
-                                key = key,
-                                si = si,
-                                needle = needle,
-                                hit = hit,
-                                claim_idxs = claim_idxs,
-                                dist = dist,
-                            }
-                        end
-                    end
-                end
-            end
-        end
-        if best then
-            progress = true
-            filled[best.key] = true
-            claim_ocr_hits(claimed_ocr, best.hit, best.claim_idxs)
-            local st = states[best.si]
-            push_result(
-                objects, st.o, "matched", best.hit.read or best.hit.label, best.hit.confidence, "ocr", best.needle
-            )
-            matched = matched + 1
-        end
-    end
-    for si, st in ipairs(states) do
-        for _, needle in ipairs(st.pending_shared) do
-            local key = si .. "\0" .. normalize_alnum(needle)
-            if not filled[key] then
-                push_result(objects, st.o, "missing", nil, nil, "ocr", needle)
-            end
-        end
-    end
-
-    return matched, expect_yolo, expect_ocr
+    return rows, matched, expect_yolo, expect_ocr
 end
 
 -- Catalog-anchored extras — see the toggleable-module header comment.
--- Unlike `score_instance_for_object` (competing profile objects), a
--- signature owned by a single catalog component is unambiguous by
+-- A signature owned by a single catalog component is unambiguous by
 -- construction and always accepted without needing OCR.
 local function score_catalog_instance(comp, instance, ocr_detections, group)
     if #group <= 1 then
@@ -1110,60 +892,31 @@ local function presence_validator(input)
     local expect_yolo = false
     local expect_ocr = false
 
-    -- Partition: objects that share a YOLO class set compete for instances.
-    local groups = {}
-    local group_order = {}
-    local solos = {}
-    for _, o in ipairs(expected_flat) do
-        local ocr_values = o.ocr_values or {}
-        local has_ocr = #ocr_values > 0
-        local has_yolo = #(o.yolo_classes or {}) > 0 and has_vision_model(o)
-        local on_rail = o.presence or has_ocr
-        if on_rail and (has_ocr or has_yolo) then
-            if o.presence and has_yolo then
-                local key = object_class_sig(o)
-                if not groups[key] then
-                    groups[key] = {}
-                    table.insert(group_order, key)
-                end
-                table.insert(groups[key], o)
-            else
-                table.insert(solos, o)
-            end
+    local parts = {}
+    for at, o in ipairs(expected_flat) do
+        local has_ocr = #(o.ocr_values or {}) > 0
+        if (o.presence or has_ocr) and (has_ocr or has_yolo(o)) then
+            parts[#parts + 1] = { o = o, at = at, lacking = lacking(o, detections, ocr_detections) }
         end
     end
-
-    -- Competing / singleton YOLO groups.
-    for _, key in ipairs(group_order) do
-        local group = groups[key]
-        local classes = object_classes(group[1])
-        if #group == 1 then
-            local o = group[1]
-            local yolo_boxes = collect_yolo_boxes(detections, classes, claimed)
-            matched, expect_yolo, expect_ocr = emit_object_results(
-                objects, matched, o, yolo_boxes, ocr_detections, expect_yolo, expect_ocr
-            )
-        else
-            local instances = build_class_instances(detections, classes, claimed)
-            local assigned = assign_instances(group, instances, ocr_detections)
-            matched, expect_yolo, expect_ocr = emit_competing_group(
-                objects,
-                matched,
-                group,
-                assigned,
-                ocr_detections,
-                expect_yolo,
-                expect_ocr,
-                claimed
-            )
+    table.sort(parts, function(a, b)
+        if a.lacking ~= b.lacking then
+            return a.lacking < b.lacking
         end
+        return a.at < b.at
+    end)
+    local claimed_ocr, rows_at = {}, {}
+    for _, part in ipairs(parts) do
+        local rows, n, yolo, ocr = part_results(part.o, detections, ocr_detections, claimed, claimed_ocr)
+        rows_at[part.at] = rows
+        matched = matched + n
+        expect_yolo = expect_yolo or yolo
+        expect_ocr = expect_ocr or ocr
     end
-
-    -- Text-only (no YOLO expectation).
-    for _, o in ipairs(solos) do
-        matched, expect_yolo, expect_ocr = emit_object_results(
-            objects, matched, o, {}, ocr_detections, expect_yolo, expect_ocr
-        )
+    for at = 1, #expected_flat do
+        for _, row in ipairs(rows_at[at] or {}) do
+            objects[#objects + 1] = row
+        end
     end
 
     -- EXTRA is YOLO-only. Unused OCR strings have no product value as

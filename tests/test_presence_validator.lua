@@ -504,7 +504,7 @@ local ocr_kind_prefix = run({
 t.eq(ocr_kind_prefix.matched, 1, "ocr_kind_prefix: matches with kind ocr:<group>")
 t.eq(ocr_kind_prefix.extra, 0, "ocr_kind_prefix: OCR never EXTRA")
 
--- OCR must sit inside the object's YOLO box (center-in-AABB).
+-- Presence is location-free: the text counts away from the class box.
 local spatial_out = run({
     expected = {
         {
@@ -524,9 +524,9 @@ local spatial_out = run({
         { label = "2020", confidence = 1.0, x = 0.8, y = 0.8, width = 0.1, height = 0.1, kind = "ocr" },
     },
 })
-t.eq(spatial_out.matched, 1, "spatial_out: YOLO matched, OCR outside")
+t.eq(spatial_out.matched, 2, "spatial_out: YOLO and OCR both count")
 local spat_ocr = find_object(spatial_out.objects, "spat0000-0000-4000-8000-000000000001", "ocr")
-t.eq(spat_ocr.status, "missing", "spatial_out: OCR outside YOLO is missing")
+t.eq(spat_ocr.status, "matched", "spatial_out: OCR outside the class box counts")
 
 local spatial_in = run({
     expected = {
@@ -576,7 +576,7 @@ t.eq(spatial_union.total, 3, "spatial_union: 1 YOLO + 2 OCR")
 t.eq(spatial_union.matched, 3, "spatial_union: both texts inside union")
 t.eq(spatial_union.extra, 0, "spatial_union: both class boxes claimed (not EXTRA)")
 
--- Text in neither half (outside union) fails even when label matches.
+-- Text in neither half of a two-class part still counts.
 local spatial_gap = run({
     expected = {
         {
@@ -598,7 +598,7 @@ local spatial_gap = run({
     },
 })
 local gap_ocr = find_object(spatial_gap.objects, "spat0000-0000-4000-8000-000000000004", "ocr")
-t.eq(gap_ocr.status, "missing", "spatial_gap: OCR outside combined YOLO area")
+t.eq(gap_ocr.status, "matched", "spatial_gap: OCR outside both class boxes counts")
 
 -- Two profile objects share the same class set; only one stamp is present.
 -- Unique OCR must assign the instance to X04; P06 is fully missing.
@@ -712,7 +712,7 @@ for _, o in ipairs(adjacent.objects) do
     t.eq(o.status, "matched", "adjacent: " .. tostring(o.id) .. " " .. tostring(o.match_kind))
 end
 
--- OCR far outside the object's YOLO pad is ignored (not a wrong value).
+-- A text far from the class box still counts: only a wrapper ties them.
 local FAR_ID = "far00000-0000-4000-8000-000000000001"
 local far_noise = run({
     expected = {
@@ -734,9 +734,9 @@ local far_noise = run({
         { label = "9 New T 1", confidence = 0.9, x = 0.7, y = 0.7, width = 0.15, height = 0.1, kind = "ocr" },
     },
 })
-t.eq(far_noise.matched, 1, "far_noise: YOLO only — OCR outside gate")
+t.eq(far_noise.matched, 2, "far_noise: YOLO and the far text both count")
 local far_ocr = find_object(far_noise.objects, FAR_ID, "ocr")
-t.eq(far_ocr.status, "missing", "far_noise: 2020 outside YOLO is missing")
+t.eq(far_ocr.status, "matched", "far_noise: 2020 away from the class box counts")
 
 -- Arched year split into digit fragments — assemble left-to-right inside gate.
 local FRAG_ID = "frag0000-0000-4000-8000-000000000001"
@@ -784,9 +784,8 @@ local catalog_all = {
     { id = ANCHOR_SOLO_ID, name = "Oval Mark", yolo_classes = { "oval_mark" }, ocr_values = {} },
 }
 
--- Same competing P06/X04 scene as `compete`, plus an unexpected third
--- stamp (D07 — same classes, not in the profile at all, own unique code)
--- sitting well clear of the other two so it can't share their OCR gate.
+-- The X04 stamp the profile expects, plus an unexpected second stamp (D07 —
+-- same classes, not in the profile at all, own unique code).
 local function competing_scene_with_extra_stamp()
     return {
         { label = "test_1_lower", confidence = 0.9, x = 0.0, y = 0.0, width = 0.4, height = 0.25, kind = "yolo" },
@@ -827,7 +826,7 @@ local competing_expected = {
 -- Off by default: the unexpected stamp still surfaces as flat, unnamed
 -- unclaimed boxes — zero behavior change from before this toggle existed.
 local anchor_off = run({
-    expected = competing_expected,
+    expected = { competing_expected[2] },
     detections = competing_scene_with_extra_stamp(),
 })
 t.eq(anchor_off.extra, 2, "anchor off: D07's two class boxes are flat extras")
@@ -838,7 +837,7 @@ end
 -- On: the same two boxes cluster into one instance, named "Test D07" from
 -- the catalog via its unique OCR code (shared "2020" alone would not do).
 local anchor_on = run({
-    expected = competing_expected,
+    expected = { competing_expected[2] },
     detections = competing_scene_with_extra_stamp(),
     catalog = catalog_all,
     opts = { anchor_extras = true },
@@ -852,7 +851,7 @@ t.eq(anchor_on.extra_detections[1].kind, "extra", "anchor on: instance kind")
 local no_ocr_dets = competing_scene_with_extra_stamp()
 table.remove(no_ocr_dets, #no_ocr_dets)
 local anchor_ambiguous = run({
-    expected = competing_expected,
+    expected = { competing_expected[2] },
     detections = no_ocr_dets,
     catalog = catalog_all,
     opts = { anchor_extras = true },
