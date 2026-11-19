@@ -1,9 +1,15 @@
 -- Zoned inspect: each closed zone is one view of a board that does not
 -- fit the frame. A zone is scored once, while fully visible, and the
--- session verdict keeps every zone.
+-- session verdict keeps every zone. A still that is not zoned keeps every
+-- part it has matched (`latch_rows`).
 --
 -- Ops (`{ op = "<name>", ... }`):
 --
+--   latch_rows { verdict = Verdict|nil, latched = { Row } }
+--     -> { verdict = Verdict|nil, latched = { Row } }
+--     A part matched once on the still on camera stays matched: a later
+--     miss, pose fail or unsettled text shows the matched row it had.
+--     Surplus is never latched. Hosts drop `latched` when the still changes.
 --   latch   { holds = { ZoneHold }, visible = { Visible }, verdict = Verdict }
 --     -> { holds }
 --   compose { zone_ids = { "<object id>" } (profile order),
@@ -192,6 +198,90 @@ function zones.compose(input)
         chips[#chips + 1] = chip
     end
     return { verdict = out, zones = chips }
+end
+
+local INCORRECT = {
+    mispositioned = true,
+    misrotated = true,
+    mispositioned_misrotated = true,
+    mismatched = true,
+}
+
+local function row_key(r)
+    if r.object_id ~= nil and r.object_id ~= "" then
+        return "id:" .. tostring(r.object_id)
+    end
+    return "label:" .. tostring(r.label or "")
+end
+
+local function latched_verdict(v, rows)
+    local matched, total, incorrect, missing, pending = 0, 0, 0, 0, 0
+    for _, r in ipairs(rows) do
+        if r.status ~= "extra" then
+            total = total + 1
+            if r.status == "matched" then
+                matched = matched + 1
+            elseif r.status == "missing" then
+                missing = missing + 1
+            elseif INCORRECT[r.status] then
+                incorrect = incorrect + 1
+            else
+                pending = pending + 1
+            end
+        end
+    end
+    local out = copy(v)
+    local extra = v.extra or 0
+    out.rows = rows
+    out.matched, out.total, out.incorrect, out.missing = matched, total, incorrect, missing
+    if v.no_expectations then
+        return out
+    end
+    out.complete = matched == total and extra == 0 and incorrect == 0
+    if out.complete then
+        out.result = "pass"
+    elseif pending > 0 and incorrect == 0 and missing == 0 and extra == 0 then
+        out.result = "pending"
+    else
+        out.result = "fail"
+    end
+    return out
+end
+
+function zones.latch_rows(input)
+    local kept, order = {}, {}
+    local function keep(r)
+        local k = row_key(r)
+        if kept[k] == nil then
+            order[#order + 1] = k
+        end
+        kept[k] = r
+    end
+    for _, r in ipairs(input.latched or {}) do
+        keep(r)
+    end
+    local v = input.verdict
+    local out
+    if v ~= nil then
+        local rows = {}
+        for i, r in ipairs(v.rows or {}) do
+            local held = kept[row_key(r)]
+            if r.status == "matched" then
+                keep(r)
+                rows[i] = r
+            elseif r.status ~= "extra" and held ~= nil then
+                rows[i] = held
+            else
+                rows[i] = r
+            end
+        end
+        out = latched_verdict(v, rows)
+    end
+    local latched = {}
+    for _, k in ipairs(order) do
+        latched[#latched + 1] = kept[k]
+    end
+    return { verdict = out, latched = latched }
 end
 
 return zones

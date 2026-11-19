@@ -25,6 +25,7 @@ local suites = {
     "test_session.lua",
     "test_ocr_window.lua",
     "test_session_host.lua",
+    "test_row_latch.lua",
     "test_session_view.lua",
     "test_report.lua",
     "test_report_catalog.lua",

@@ -428,6 +428,7 @@ Every live-session decision a client used to make: the verdict it shows, OCR set
 | `ocr.text_reads` | `mode` (`frame` · `window` · `view`), `reads`, `frames`, `pool`, `needles` | `{ reads, pool }` — the reads Presence scores: `window` adds expected text read in the window's frames, `view` adds expected text kept in `pool` since the view began. The host keeps `pool` and empties it when the view changes |
 | `zones.latch` | `holds`, `visible`, `verdict` | `{ holds: [{ object_id, pass, rows }] }` |
 | `zones.compose` | `zone_ids`, `live`, `holds`, `visible` | `{ verdict, zones: [{ object_id, matched, total, pending }] }` |
+| `zones.latch_rows` | `verdict?`, `latched` | `{ verdict?, latched: [Row] }`: a part matched on the still keeps its matched row; surplus is never latched; the host drops `latched` when the still changes |
 | `session.settle` | `verdict`, `published`, `candidate`, `hits`, `dirty`, `readings` | `{ publish, candidate, hits, fingerprint }` |
 | `session.completion` | `verdict`, `zoned`, `zone_holds`, `zone_count`, `multi_view`, `view_done`, `views_left`, `done_results`, `ticks_on_view`, `fail_ticks`, `window_frames`, `fail_frames`, `tick_ms`, `await?`, `finish?` | `{ action: "none"|"view"|"finish", result?, view_result?, fail_ticks }` — `await` (the still's view is in await mode) never ends the still; `finish` (the operator pressed Finish) ends it now with the `stop` result |
 | `session.next_view` | `proposals`, `proposal`, `window_frames`, `tick_ms` | `{ proposals, adopt? }` |
