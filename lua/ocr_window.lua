@@ -2,7 +2,9 @@
 -- read is settled, and which stale reads leave the live window.
 --
 -- Loaded as the `ocr_window` local ahead of `verdict.lua` (the host
--- concatenates the two), or as a global by the pure-Lua tests.
+-- concatenates the two), or as a global by the pure-Lua tests. Needs
+-- `matcher` (and the `normalisator` it reads) in scope: a read hits an
+-- expected text exactly when Presence would match it.
 --
 --   ocr_window.hits(label, needle) -> bool
 --   ocr_window.progress {
@@ -26,17 +28,9 @@ local SETTLE_TICKS = 4
 -- Empty ticks before a never-seen expected string is a real miss.
 local ABSENT_TICKS = 4
 
--- Alphanumeric, upper-case. Two strings hit when either holds the other.
-local function key(s)
-    return (tostring(s or ""):gsub("[^%w]", ""):upper())
-end
-
 function ocr_window.hits(label, needle)
-    local a, b = key(label), key(needle)
-    if a == "" or b == "" then
-        return false
-    end
-    return a == b or a:find(b, 1, true) ~= nil or b:find(a, 1, true) ~= nil
+    local r = matcher({ hay = tostring(label or ""), needle = tostring(needle or "") })
+    return type(r) == "table" and r.matched == true
 end
 
 local function hits_any(label, needles)
@@ -131,7 +125,8 @@ end
 -- `window`: also expected text read in any frame still in the window.
 -- `view`: also expected text read earlier in the view; `pool` carries those
 -- reads from tick to tick, and the host empties it when the view changes.
--- A text read this tick stands for any earlier read of the same text.
+-- Each expected text keeps its newest read: one read this tick stands for
+-- every earlier read of it, and one read can hold several texts.
 function ocr_window.text_reads(input)
     local mode = input.mode
     local reads = input.reads or {}
@@ -139,20 +134,26 @@ function ocr_window.text_reads(input)
         return { reads = reads, pool = {} }
     end
     local needles = input.needles or {}
-    local out, seen = {}, {}
-    local function expected(d)
-        return is_ocr_kind(d.kind) and hits_any(d.label, needles)
+    local out, covered = {}, {}
+    -- Marks the texts `d` holds that no newer read held; true when any.
+    local function cover(d)
+        local any = false
+        if is_ocr_kind(d.kind) then
+            for i, n in ipairs(needles) do
+                if not covered[i] and ocr_window.hits(d.label, n) then
+                    covered[i] = true
+                    any = true
+                end
+            end
+        end
+        return any
     end
     for _, d in ipairs(reads) do
         out[#out + 1] = d
-        if is_ocr_kind(d.kind) then
-            seen[key(d.label)] = true
-        end
+        cover(d)
     end
     local function add(d)
-        local k = key(d.label)
-        if expected(d) and not seen[k] then
-            seen[k] = true
+        if cover(d) then
             out[#out + 1] = d
         end
     end
@@ -169,7 +170,7 @@ function ocr_window.text_reads(input)
             add(d)
         end
         for _, d in ipairs(out) do
-            if expected(d) then
+            if is_ocr_kind(d.kind) and hits_any(d.label, needles) then
                 pool[#pool + 1] = d
             end
         end

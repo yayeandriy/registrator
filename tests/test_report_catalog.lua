@@ -5,6 +5,7 @@ local script_dir = (arg[0]):match("(.*/)")
 local lua_dir = script_dir .. "../lua/"
 local t = dofile(script_dir .. "asserts.lua")
 normalisator = dofile(lua_dir .. "normalisator.lua")
+matcher = dofile(lua_dir .. "matcher.lua")
 ocr_window = dofile(lua_dir .. "ocr_window.lua")
 report_rules = dofile(lua_dir .. "report_rules.lua")
 local catalog = dofile(lua_dir .. "report_catalog.lua")

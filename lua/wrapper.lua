@@ -10,9 +10,13 @@
 --
 -- wrapper.detections(expected, dets) -> dets
 --   Drops every wrapper box that misses one of its part's other detections,
---   and the YOLO boxes a held wrapper contains for its part.
+--   and the YOLO boxes a held wrapper contains for its part. A held class
+--   box is tagged `class_id = wrapper.part_class(id)` for the part it holds
+--   (one copy per part), so parts that share a wrapper class never take
+--   each other's box.
 -- wrapper.expected(expected) -> expected
---   A copy of the tree where a wrapped part expects only its wrapper.
+--   A copy of the tree where a wrapped part expects only its wrapper: its
+--   own tagged box for a class wrapper, the wrapper text for a text one.
 -- wrapper.lacks(expected, dets) -> { [object id] = { Lack } }
 --   Why each wrapped part does not count: its wrapper unseen, or what the
 --   best wrapper box fails to hold. Lack = { label, kind = "class"|"text",
@@ -120,12 +124,25 @@ local function held(dets, wi, needs)
     return taken
 end
 
+local function part_class(id)
+    return "wrapper:" .. tostring(id)
+end
+
+local function tagged(d, id)
+    local c = {}
+    for k, v in pairs(d) do
+        c[k] = v
+    end
+    c.class_id = part_class(id)
+    return c
+end
+
 local function detections(expected, dets)
     local objects = wrapped_objects(expected, {})
     if #objects == 0 or type(dets) ~= "table" then
         return dets
     end
-    local keep, drop = {}, {}
+    local keep, drop, holds = {}, {}, {}
     for _, o in ipairs(objects) do
         local needs = inners(o)
         for i, d in ipairs(dets) do
@@ -133,6 +150,10 @@ local function detections(expected, dets)
                 local taken = held(dets, i, needs)
                 if taken then
                     keep[i] = true
+                    if not o.wrapper.text then
+                        holds[i] = holds[i] or {}
+                        holds[i][#holds[i] + 1] = o.id
+                    end
                     for j in pairs(taken) do
                         drop[j] = drop[j] or not is_ocr(dets[j])
                     end
@@ -144,7 +165,11 @@ local function detections(expected, dets)
     end
     local out = {}
     for i, d in ipairs(dets) do
-        if keep[i] or not drop[i] then
+        if holds[i] then
+            for _, id in ipairs(holds[i]) do
+                out[#out + 1] = tagged(d, id)
+            end
+        elseif keep[i] or not drop[i] then
             out[#out + 1] = d
         end
     end
@@ -214,7 +239,7 @@ local function expected(objects)
             else
                 c.yolo_classes = { w.label }
                 c.yolo_class_refs = {
-                    { class_id = w.class_id, label = w.label, vision_model_id = w.vision_model_id },
+                    { class_id = part_class(o.id), label = w.label, vision_model_id = w.vision_model_id },
                 }
                 c.ocr_values = {}
             end
@@ -229,6 +254,7 @@ end
 
 return {
     INSIDE = INSIDE,
+    part_class = part_class,
     detections = detections,
     expected = expected,
     lacks = lacks,

@@ -51,6 +51,8 @@ local frames = run({
     },
 }).frames
 t.eq(frames[1].detections[1].label, "SN42", "frame ocr")
+t.eq(run({ value = "1×04 P06" }).value, "1X04P06", "multiplication sign read for X")
+t.eq(run({ value = "P✕7 PØ6 pø6" }).value, "PX7PO6PO6", "cross and slashed O read for X and O")
 
 if not t.summary("normalisator") then
     os.exit(1)

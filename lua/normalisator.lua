@@ -101,6 +101,7 @@ fold(0x0405, "S") fold(0x0455, "S") -- Ѕ ѕ
 fold(0x0422, "T") fold(0x0442, "T") -- Т т
 fold(0x0425, "X") fold(0x0445, "X") -- Х х
 fold(0x0423, "Y") fold(0x0443, "Y") -- У у
+fold(0x0431, "6") -- б
 -- Greek
 fold(0x0391, "A") fold(0x03B1, "A")
 fold(0x0392, "B") fold(0x03B2, "B")
@@ -116,6 +117,9 @@ fold(0x03A4, "T") fold(0x03C4, "T")
 fold(0x03A5, "Y") fold(0x03C5, "Y")
 fold(0x03A7, "X") fold(0x03C7, "X")
 fold(0x0396, "Z") fold(0x03B6, "Z")
+-- Symbols OCR reads for letters on stamped parts
+fold(0x00D7, "X") fold(0x2715, "X") fold(0x2A2F, "X") -- × ✕ ⨯
+fold(0x00D8, "O") fold(0x00F8, "O") -- Ø ø
 -- Fullwidth English
 for i = 0, 9 do
     fold(0xFF10 + i, string.char(48 + i))

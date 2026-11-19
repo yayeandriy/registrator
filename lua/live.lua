@@ -25,6 +25,41 @@ local function rewrite_dets(dets)
     return dets
 end
 
+-- Every text the tree expects, wrapper texts included.
+local function needles_of(objects, out)
+    for _, o in ipairs(objects or {}) do
+        for _, v in ipairs(o.ocr_values or {}) do
+            out[#out + 1] = v
+        end
+        if type(o.wrapper) == "table" and type(o.wrapper.text) == "string" then
+            out[#out + 1] = o.wrapper.text
+        end
+        needles_of(o.children, out)
+    end
+    return out
+end
+
+-- One read per expected text it holds, before anything scores them.
+local function split_reads(needles, dets)
+    if type(dets) ~= "table" then
+        return dets
+    end
+    return matcher({ detections = dets, needles = needles }).detections
+end
+
+local function split_frames(needles, frames)
+    local out = {}
+    for i, frame in ipairs(frames) do
+        local f = {}
+        for k, v in pairs(frame) do
+            f[k] = v
+        end
+        f.detections = split_reads(needles, frame.detections)
+        out[i] = f
+    end
+    return out
+end
+
 local function wrap_frames(expected, frames)
     local out = {}
     for i, frame in ipairs(frames) do
@@ -96,7 +131,9 @@ local function run_live_inspect(input)
         }
     end
     if expected_has_ocr(expected) then
-        frames = rewrite_frames(frames)
+        local needles = needles_of(expected, {})
+        frames = split_frames(needles, rewrite_frames(frames))
+        opts.presence_overlay = split_reads(needles, opts.presence_overlay)
     end
     local last = frames[#frames]
     local lacks = wrapper.lacks(expected, opts.presence_overlay or (last and last.detections))

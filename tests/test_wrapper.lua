@@ -66,7 +66,8 @@ t.eq(labels(text_kept), "P06@0.45", "a text wrapper consumes the class box it ho
 
 local reduced = wrapper.expected({ part(CLASS) })[1]
 t.eq(#reduced.ocr_values, 0, "a class-wrapped part reads no text itself")
-t.eq(reduced.yolo_class_refs[1].class_id, "c-lower", "a class-wrapped part expects its wrapper")
+t.eq(reduced.yolo_class_refs[1].class_id, wrapper.part_class(ID), "a class-wrapped part expects its own held box")
+t.eq(reduced.yolo_class_refs[1].label, "test_1_lower", "under its wrapper label")
 local reduced_text = wrapper.expected({ part({ text = "P06" }) })[1]
 t.eq(#reduced_text.yolo_classes, 0, "a text-wrapped part expects no class")
 t.eq(reduced_text.ocr_values[1], "P06", "a text-wrapped part expects its wrapper text")
@@ -87,6 +88,18 @@ t.eq(why({ yolo(0.1), ocr("X04", 0.15) }), "text:P06:unseen", "an unread text is
 t.eq(why({ yolo(0.1), ocr("P06", 0.8) }), "text:P06:outside", "a text read away from the box is outside")
 t.eq(why({ ocr("P06", 0.8) }), "class:test_1_lower:unseen", "no wrapper box says the wrapper is unseen")
 
+-- One read over two stamps, split as live splits it: each code is judged by
+-- its own share of the box.
+local joint = { label = "X04 P06", kind = "ocr", confidence = 0.9, x = 0.12, y = 0.15, width = 0.56, height = 0.05 }
+local two = matcher({ detections = { yolo(0.1), yolo(0.5), joint }, needles = { "X04", "P06" } }).detections
+t.eq(why(two), "", "a code read together with its neighbour still sits in its own box")
+local x04 = part(CLASS)
+x04.ocr_values = { "X04" }
+t.eq(next(wrapper.lacks({ x04 }, two)), nil, "the first code of a joint read sits in the first box")
+t.eq(labels(wrapper.detections({ part(CLASS) }, two)), "test_1_lower@0.5,X04@0.12,P06@0.4",
+    "only the box holding its share of the joint read stays")
+t.eq(why({ yolo(0.1), two[3], two[4] }), "text:P06:outside", "the other code's share does not count for the first box")
+
 local function inspect(dets, routines)
     return json.decode(json.encode(live({
         expected = { part(CLASS, routines) },
@@ -105,6 +118,35 @@ t.eq(#(pass.extras or {}), 0, "the class box that misses the text is not an extr
 local missed = inspect({ yolo(0.1), ocr("X04", 0.15), ocr("P06", 0.8) })
 t.eq(missed.presence.objects[1].status, "missing", "the part is missing when no class box holds its text")
 t.eq(missed.lacks[ID][1].why, "outside", "live says why the part is missing")
+
+-- Two parts wrapped by one class: a held box counts only for the part whose
+-- text it holds, never for the other.
+local X04_ID = "aaaaaaaa-0000-4000-8000-000000000002"
+local function pair_inspect(dets)
+    local x04 = part(CLASS)
+    x04.id, x04.ocr_values = X04_ID, { "X04" }
+    return json.decode(json.encode(live({
+        expected = { x04, part(CLASS) },
+        frames = { { t = 0, detections = dets } },
+        presence = true,
+        spatial = false,
+        frame_aspect = 1,
+    }))).presence
+end
+local function status_of(presence, id)
+    for _, o in ipairs(presence.objects) do
+        if o.id == id then
+            return o.status
+        end
+    end
+end
+local only_p06 = pair_inspect({ yolo(0.1), yolo(0.5), ocr("P06", 0.55) })
+t.eq(status_of(only_p06, ID), "matched", "the part whose text is read takes its box")
+t.eq(status_of(only_p06, X04_ID), "missing", "the other part does not take that box")
+local both = pair_inspect({ yolo(0.1), ocr("X04", 0.15), yolo(0.5), ocr("P06", 0.55) })
+t.eq(status_of(both, ID) .. "," .. status_of(both, X04_ID), "matched,matched", "each part takes the box holding its text")
+t.eq(wrapper.detections({ part(CLASS) }, { yolo(0.5), ocr("P06", 0.55) })[1].label, "test_1_lower",
+    "a held box keeps its label")
 
 if not t.summary("wrapper") then
     os.exit(1)

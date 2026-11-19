@@ -325,9 +325,11 @@ Frame-only OCR rewrite (no expected needles). **Always English:** output is ASCI
 
 Presence / Spatial text match — not registration. Expected text is matched when it appears inside any found string (or the LTR concatenation of `found`) after `normalisator.lua`.
 
-**Input:** `{ "hay": "…", "needle": "…" }` or `{ "found": ["A","B","C"], "expected": "Abc" }`
+**Input:** `{ "hay": "…", "needle": "…" }` or `{ "found": ["A","B","C"], "expected": "Abc" }` or `{ "detections": [Detection], "needles": ["X04", "P06"] }`
 
-**Output:** `{ "matched": true, "index": 1, "from": 1, "to": 1 }` or a `from`/`to` span for concat hits.
+**Output:** `{ "matched": true, "index": 1, "from": 1, "to": 1 }` or a `from`/`to` span for concat hits. With `detections`: `{ "detections": [Detection] }` where each OCR read holding a needle anywhere but as its whole text becomes one read per needle place (`label` the needle, `read` the text read, box sliced across by the needle's place). `live.lua` and `presence_validator.lua` split reads this way before scoring, so a read OCR joined over several parts ("X04 P06") counts for each.
+
+Lookalikes O/0, I/1, S/5, B/8 match each other. A code also matches read upside down ("P06" as "90d") when each of its characters has a turned form (0 1 5 8 H N X Z, 6↔9, M↔W, P↔D); a split piece of an upside-down read is cut from the box's right edge.
 
 ## `zone.lua`
 

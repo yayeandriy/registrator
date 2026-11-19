@@ -11,6 +11,7 @@ end
 local LIBS = {
     { "json", "json.lua" },
     { "normalisator", "normalisator.lua" },
+    { "matcher", "matcher.lua" },
     { "ocr_window", "ocr_window.lua" },
     { "inspect_view", "inspect_view.lua" },
     { "verdict", "verdict.lua" },

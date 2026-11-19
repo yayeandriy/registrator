@@ -3,6 +3,8 @@
 local script_dir = (arg[0]):match("(.*/)")
 local session = dofile(script_dir .. "../lua/session.lua")
 local zones = dofile(script_dir .. "../lua/session_zones.lua")
+normalisator = dofile(script_dir .. "../lua/normalisator.lua")
+matcher = dofile(script_dir .. "../lua/matcher.lua")
 local ocr_window = dofile(script_dir .. "../lua/ocr_window.lua")
 local t = dofile(script_dir .. "asserts.lua")
 

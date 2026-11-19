@@ -825,7 +825,7 @@ local function emit_object_results(
                     find_ocr(ocr_detections, needle, ocr_region, ocr_claimed, ax, ay)
                 if hit then
                     claim_ocr_hits(ocr_claimed, hit, claim_idxs)
-                    push_result(objects, o, "matched", hit.label, hit.confidence, "ocr", needle)
+                    push_result(objects, o, "matched", hit.read or hit.label, hit.confidence, "ocr", needle)
                     matched = matched + 1
                 else
                     push_result(objects, o, "missing", nil, nil, "ocr", needle)
@@ -897,7 +897,7 @@ local function emit_competing_group(
                         find_ocr(ocr_detections, needle, st.region, claimed_ocr, ax, ay)
                     if hit then
                         claim_ocr_hits(claimed_ocr, hit, claim_idxs)
-                        push_result(objects, o, "matched", hit.label, hit.confidence, "ocr", needle)
+                        push_result(objects, o, "matched", hit.read or hit.label, hit.confidence, "ocr", needle)
                         matched = matched + 1
                     else
                         push_result(objects, o, "missing", nil, nil, "ocr", needle)
@@ -946,7 +946,7 @@ local function emit_competing_group(
             claim_ocr_hits(claimed_ocr, best.hit, best.claim_idxs)
             local st = states[best.si]
             push_result(
-                objects, st.o, "matched", best.hit.label, best.hit.confidence, "ocr", best.needle
+                objects, st.o, "matched", best.hit.read or best.hit.label, best.hit.confidence, "ocr", best.needle
             )
             matched = matched + 1
         end
@@ -1074,12 +1074,26 @@ local function build_catalog_extras(unclaimed, catalog, ocr_detections)
     return results
 end
 
+-- One read per expected text it holds (`matcher.lua`, `detections`).
+local function split_reads(dets, expected_flat)
+    if type(matcher) ~= "function" or type(dets) ~= "table" then
+        return dets or {}
+    end
+    local needles = {}
+    for _, o in ipairs(expected_flat) do
+        for _, v in ipairs(o.ocr_values or {}) do
+            needles[#needles + 1] = v
+        end
+    end
+    return matcher({ detections = dets, needles = needles }).detections
+end
+
 local function presence_validator(input)
     local expected_flat = flatten(input.expected or {}, {})
 
     local detections = {}
     local ocr_detections = {}
-    for i, d in ipairs(input.detections or {}) do
+    for i, d in ipairs(split_reads(input.detections, expected_flat)) do
         local tagged = { _idx = i }
         for k, v in pairs(d) do
             tagged[k] = v
