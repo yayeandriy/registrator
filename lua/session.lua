@@ -22,6 +22,8 @@
 --   anchor_search { ticks, fail_frames, tick_ms } -> { ticks, missing }
 --   router_completion { ready, any_value, fail_ticks, fail_frames, tick_ms }
 --     -> { result? = "pass"|"fail", fail_ticks }
+--   switch_wait { delay, t, detections, since? } -> { since?, due, progress }
+--     seconds; `since` is when the camera last went empty, handed back.
 --   ticks_for_frames { frames, tick_ms } -> { ticks }
 --   stop        { verdict? } -> { result }  (operator stop: the still's result)
 --   overall     { run?, view_results = { "pass"|"fail" } } -> { result }
@@ -279,6 +281,20 @@ function session.router_completion(input)
     local ticks = (input.fail_ticks or 0) + 1
     local grace = session.ticks(math.max(1, input.fail_frames or 1), input.tick_ms)
     return { result = ticks >= grace and "fail" or nil, fail_ticks = ticks }
+end
+
+-- After a finished run, the next one starts once the camera has seen
+-- nothing for `delay` seconds. Anything seen starts the wait over; no
+-- delay never switches.
+function session.switch_wait(input)
+    local delay = tonumber(input.delay) or 0
+    if delay <= 0 or (input.detections or 0) > 0 then
+        return { due = false, progress = 0 }
+    end
+    local t = tonumber(input.t) or 0
+    local since = tonumber(input.since) or t
+    local waited = math.max(0, t - since)
+    return { since = since, due = waited >= delay, progress = math.min(1, waited / delay) }
 end
 
 return session

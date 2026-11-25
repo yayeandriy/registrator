@@ -433,6 +433,7 @@ Every live-session decision a client used to make: the verdict it shows, OCR set
 | `session.next_view` | `proposals`, `proposal`, `window_frames`, `tick_ms` | `{ proposals, adopt? }` |
 | `session.anchor_search` | `ticks`, `fail_frames`, `tick_ms` | `{ ticks, missing }` |
 | `session.router_completion` | `ready`, `any_value`, `fail_ticks`, `fail_frames`, `tick_ms` | `{ result?, fail_ticks }` |
+| `session.switch_wait` | `delay` (s), `t` (s), `detections` (count this tick), `since?` (s, handed back) | `{ since?, due, progress }` — after a finished run the next starts once nothing has been seen for `delay`; `progress` (0–1) is how much of `delay` has passed empty; a detection resets the wait; `delay` 0 never switches |
 | `session.ticks_for_frames` | `frames`, `tick_ms` | `{ ticks }` — phone frames (12 fps) as ticks, never under two |
 | `session.stop` | `verdict?` | `{ result }` — a manual stop passes only on a complete pass |
 | `session.overall` | `run?`, `view_results` | `{ result }` — completion's run wins, else fail when any view failed |

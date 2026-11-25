@@ -196,6 +196,26 @@ local yolo_hit = ocr_window.progress({ wants_ocr = true, backend_ran = true, nee
     rows = { { label = "26050D", matched_label = "26050D", status = "matched", match_kind = "yolo" } } })
 t.eq(yolo_hit.has_match, true, "a spatial match of the expected text counts as an OCR match")
 
+-- A finished run switches once the camera has seen nothing for the delay.
+local off = session.switch_wait({ delay = 0, t = 9, detections = 0, since = 1 })
+t.eq(off.due, false, "no delay never switches")
+t.is_nil(off.since, "no delay keeps no wait")
+t.eq(off.progress, 0, "no delay shows no wait")
+local first = session.switch_wait({ delay = 2, t = 5, detections = 0 })
+t.eq(first.since, 5, "the wait starts on the first empty tick")
+t.eq(first.due, false, "the first empty tick is not the delay")
+local waiting = session.switch_wait({ delay = 2, t = 6.5, detections = 0, since = first.since })
+t.eq(waiting.since, 5, "the wait keeps its start")
+t.eq(waiting.due, false, "under the delay it waits")
+t.eq(waiting.progress, 0.75, "the wait shows how far it got")
+local seen_again = session.switch_wait({ delay = 2, t = 6.8, detections = 3, since = waiting.since })
+t.is_nil(seen_again.since, "anything seen starts the wait over")
+t.eq(seen_again.due, false, "anything seen holds the run")
+t.eq(seen_again.progress, 0, "anything seen empties the wait")
+local due = session.switch_wait({ delay = 2, t = 9, detections = 0, since = 7 })
+t.eq(due.due, true, "nothing seen for the delay switches")
+t.eq(due.progress, 1, "a due wait is full")
+
 if not t.summary("session") then
     os.exit(1)
 end
