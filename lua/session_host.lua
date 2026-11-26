@@ -1,11 +1,8 @@
 -- Host entry for the live-session ops, so the Rust (mlua) and Swift
 -- (C Lua) hosts share one contract and never re-declare the shapes.
 --
--- Needs, in scope and in this order: `json`, `normalisator`,
--- `ocr_window`, `inspect_view`, `verdict`, `session`, `session_zones`,
--- `session_extras`, `session_view`, `report_rules`, `report_catalog`,
--- `report_zones`, `report`, `zone`, `populate`, `detect`. The host concatenates
--- them ahead of this file.
+-- Needs, in scope and in order, every `wrap` module of the `session`
+-- bundle in `bundles.json`; the host concatenates them ahead of this file.
 --
 -- Input:  { module = "verdict"|"session"|"zones"|"ocr"|"extras"|"view"|"report"|"populate"|"detect",
 --           op = "<name>", args = { ... } }

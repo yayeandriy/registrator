@@ -1,6 +1,6 @@
 -- Board-space zone membership for multi-anchor inspect.
 --
--- Standalone: `local zone = dofile("zone.lua")`. No `require`.
+-- Needs `tables`. No `require`.
 --
 -- Input (when called as `zone(input)`):
 --   { op = "polygon_in_frame"|"point_in_zone"|"box_inside_zone"|
@@ -257,18 +257,10 @@ local function zone_hits(objects, zones)
     return out
 end
 
-local function copy_object(o)
-    local c = {}
-    for k, v in pairs(o) do
-        c[k] = v
-    end
-    return c
-end
-
 local function with_sole_anchor(tree, oid)
     local out = {}
     for _, o in ipairs(tree or {}) do
-        local copy = copy_object(o)
+        local copy = tables.copy(o)
         copy.is_anchor = object_id(o) == tostring(oid)
         copy.children = with_sole_anchor(o.children, oid)
         out[#out + 1] = copy
@@ -296,13 +288,13 @@ local function filter_keep(tree, keep)
     for _, o in ipairs(tree or {}) do
         local kids = filter_keep(o.children, keep)
         if keep_has(keep, object_id(o)) then
-            local copy = copy_object(o)
+            local copy = tables.copy(o)
             copy.children = kids
             out[#out + 1] = copy
         else
             local b = o.boundary or {}
             for _, kid in ipairs(kids) do
-                local k = copy_object(kid)
+                local k = tables.copy(kid)
                 local kb = {}
                 for kk, vv in pairs(kid.boundary or {}) do
                     kb[kk] = vv

@@ -53,196 +53,7 @@
 -- spurious false positive; either way, not something any `objects`
 -- entry already accounts for. Unused OCR (`kind` starting `ocr`) is
 -- never listed as extra — same rule as `presence_validator.lua`.
-
--- Deliberately generous — a single-anchor registration (the common case
--- today: most boards define just the one anchor) only pins position and
--- axis-aligned scale near *that* anchor; error grows the further an
--- object sits from it, and a strict threshold tuned for objects right
--- next to the anchor false-flags everything further away as
--- "mispositioned" even when registration is working fine. These are only
--- ever the *fallback* anyway — see `domain::Setting` / the "Settings"
--- TODO — an admin can (and, per a board's actual size/anchor placement,
--- usually should) tune tighter or looser from the detection-log view
--- without a redeploy.
-local DEFAULT_THRESHOLDS = {
-    position = 8.0,
-    rotation = 30.0,
-}
-
--- Deliberately duplicated from `registration.lua` rather than shared via
--- a `require` — each script is loaded standalone (by whatever embeds it,
--- native or Lua VM, on whatever platform) with no shared module path to
--- resolve one against, and this is small/stable enough (mirrors
--- `ReferenceObject`'s own shape 1:1) that drift risk is low. If it ever
--- needs to change, change it in both files.
-local function trim(s)
-    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
-end
-
-local function non_empty(s)
-    return type(s) == "string" and trim(s) ~= ""
-end
-
-local function normalize_alnum(s)
-    if type(normalisator) == "function" then
-        local r = normalisator({ value = s })
-        if type(r) == "table" and type(r.value) == "string" then
-            return r.value
-        end
-        return ""
-    end
-    if type(s) ~= "string" then
-        return ""
-    end
-    local t = trim(s):upper()
-    t = t:gsub("%s+", "")
-    t = t:gsub("[^%w]", "")
-    return t
-end
-
--- Spatial text match — same `matcher.lua` Presence uses (expected inside found).
-local function is_ocr_kind(kind)
-    if type(kind) ~= "string" then
-        return false
-    end
-    kind = kind:lower()
-    return kind == "ocr" or kind:sub(1, 4) == "ocr:"
-end
-
-local function ocr_text_match(hay, needle)
-    if type(matcher) == "function" then
-        local r = matcher({ hay = hay, needle = needle })
-        return r and r.matched == true
-    end
-    local h = normalize_alnum(hay)
-    local n = normalize_alnum(needle)
-    return h ~= "" and n ~= "" and h:find(n, 1, true) ~= nil
-end
-
-local function yolo_classes_for(o)
-    if type(o.yolo_classes) == "table" then
-        local out = {}
-        for _, v in ipairs(o.yolo_classes) do
-            if non_empty(v) then
-                table.insert(out, trim(v))
-            end
-        end
-        if #out > 0 then
-            return out
-        end
-    end
-    if non_empty(o.yolo_class) then
-        return { trim(o.yolo_class) }
-    end
-    return {}
-end
-
-local function ocr_values_for(o)
-    if type(o.ocr_values) == "table" then
-        local out = {}
-        for _, v in ipairs(o.ocr_values) do
-            if non_empty(v) then
-                table.insert(out, trim(v))
-            end
-        end
-        if #out > 0 then
-            return out
-        end
-    end
-    if non_empty(o.ocr_value) then
-        return { trim(o.ocr_value) }
-    end
-    -- Text-only placement with no hydrated needles: the object name is
-    -- the expected string (overlay / verdict both show it).
-    if #(yolo_classes_for(o)) == 0 and non_empty(o.name) then
-        return { trim(o.name) }
-    end
-    return {}
-end
-
-local function label_in_classes(detection, classes)
-    if type(class_match) == "table" and type(class_match.in_expected) == "function" then
-        local d = detection
-        if type(detection) ~= "table" then
-            d = { label = detection }
-        end
-        return class_match.in_expected(d, classes)
-    end
-    local label = type(detection) == "table" and detection.label or detection
-    for _, class in ipairs(classes) do
-        local exp = type(class) == "table" and class.label or class
-        if label == exp then
-            return true
-        end
-    end
-    return false
-end
-
-local function label_matches_object(detection, o)
-    local classes = (type(class_match) == "table" and class_match.expected_list(o))
-        or (o.yolo_classes or {})
-    if label_in_classes(detection, classes) then
-        return true
-    end
-    local label = type(detection) == "table" and detection.label or detection
-    -- Text-only Spatial placements have no YOLO class — match OCR needles
-    -- the same way Presence does (overlay "TEXT" vs expected "TEXT A").
-    if #(o.yolo_classes or {}) == 0 then
-        for _, needle in ipairs(o.ocr_values or {}) do
-            if ocr_text_match(label, needle) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function label_is_expected_ocr(label, expected_flat)
-    for _, o in ipairs(expected_flat) do
-        for _, needle in ipairs(o.ocr_values or {}) do
-            if ocr_text_match(label, needle) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function flatten(objects, origin_x, origin_y, out)
-    origin_x = origin_x or 0.0
-    origin_y = origin_y or 0.0
-    for _, o in ipairs(objects) do
-        local x = origin_x + o.boundary.x
-        local y = origin_y + o.boundary.y
-        table.insert(out, {
-            id = o.id,
-            yolo_classes = yolo_classes_for(o),
-            yolo_class_refs = o.yolo_class_refs,
-            vision_model_id = o.vision_model_id,
-            ocr_values = ocr_values_for(o),
-            x = x,
-            y = y,
-            width = o.boundary.width,
-            height = o.boundary.height,
-            rotation = o.rotation or 0.0,
-            is_anchor = o.is_anchor,
-            symmetry = o.symmetry or "inf",
-        })
-        if o.children then
-            flatten(o.children, x, y, out)
-        end
-    end
-    return out
-end
-
-local function center(o)
-    return o.x + o.width / 2.0, o.y + o.height / 2.0
-end
-
-local function distance(ax, ay, bx, by)
-    local dx, dy = ax - bx, ay - by
-    return math.sqrt(dx * dx + dy * dy)
-end
+-- Needs `expected`, `pose` and `spatial` (composed by `bundles.json`).
 
 -- Two placements of the same class on the same box are one physical
 -- part. A single detection used to match the first and leave the copy
@@ -250,8 +61,8 @@ end
 local function expectation_key(o)
     local classes = {}
     for _, c in ipairs(o.yolo_classes or {}) do
-        if non_empty(c) then
-            table.insert(classes, string.lower(trim(c)))
+        if expected.non_empty(c) then
+            table.insert(classes, string.lower(expected.trim(c)))
         end
     end
     table.sort(classes)
@@ -260,8 +71,8 @@ local function expectation_key(o)
     end
     local texts = {}
     for _, t in ipairs(o.ocr_values or {}) do
-        if non_empty(t) then
-            table.insert(texts, string.lower(trim(t)))
+        if expected.non_empty(t) then
+            table.insert(texts, string.lower(expected.trim(t)))
         end
     end
     table.sort(texts)
@@ -284,10 +95,10 @@ local function same_stacked_part(a, b)
     if math.abs((a.height or 0.0) - (b.height or 0.0)) / max_h > 0.25 then
         return false
     end
-    local ax, ay = center(a)
-    local bx, by = center(b)
+    local ax, ay = pose.center(a)
+    local bx, by = pose.center(b)
     local diag = math.sqrt(max_w * max_w + max_h * max_h)
-    return distance(ax, ay, bx, by) <= diag * 0.2
+    return pose.distance(ax, ay, bx, by) <= diag * 0.2
 end
 
 local function collapse_stacked(flat)
@@ -309,405 +120,58 @@ local function collapse_stacked(flat)
     return kept
 end
 
--- A rectangle looks identical rotated by 180°, so only the *minimal*
--- difference within that period is meaningful — e.g. an object expected
--- at 5° and detected at 183° is really only 2° off, not 178°.
---
--- Generalised for per-object `symmetry` (wire / DB values):
---   "0"   — fully symmetrical: any orientation accepted (delta 0)
---   "60"  — hexagonal (period 60°)
---   "90"  — square (period 90°)
---   "120" — triangular (period 120°)
---   "180" — rectangular (period 180°)
---   "inf" — no symmetry: full-circle compare (period 360° → delta in [0, 180])
--- Missing / unknown → "inf" (product default).
-local function angle_diff_with_symmetry(a, b, symmetry)
-    local sym = tostring(symmetry or "inf")
-    if sym == "0" then
-        return 0.0
-    end
-    local period
-    if sym == "inf" then
-        period = 360.0
-    else
-        period = tonumber(sym) or 360.0
-        if period <= 0 then
-            return 0.0
-        end
-    end
-    local half = period / 2.0
-    local diff = (a - b) % period
-    if diff < 0 then
-        diff = diff + period
-    end
-    if diff > half then
-        diff = period - diff
-    end
-    return diff
-end
-
--- Heading of the long side of a *local* box + `rotation` (expected
--- objects). A tall 2×8 at 0° and a wide 8×2 stored at 90° are the same
--- rectangle — raw `rotation` differs by 90° under period-180.
-local function long_axis_heading(rot, w, h)
-    rot = type(rot) == "number" and rot or 0.0
-    w = type(w) == "number" and w or 0.0
-    h = type(h) == "number" and h or 0.0
-    if w >= h then
-        return rot
-    end
-    return rot + 90.0
-end
-
--- Fold into (-90, 90].
-local function wrap_signed_90(deg)
-    local a = deg % 180.0
-    if a > 90.0 then
-        a = a - 180.0
-    elseif a <= -90.0 then
-        a = a + 180.0
-    end
-    return a
-end
-
--- Registered detections store the AABB of unregistered corners plus the
--- top-edge angle. A wide AABB with top-edge ~87° is a horizontal pin
--- whose detector ordered a tall local box at 90° — the visual long axis
--- is 0°, not 87°. Treating AABB w/h as a local box invented a 90° miss
--- against a 267° stored placement (mask-fit canonicalize).
-local function registered_long_axis_heading(rot, w, h)
-    rot = type(rot) == "number" and rot or 0.0
-    w = type(w) == "number" and w or 0.0
-    h = type(h) == "number" and h or 0.0
-    local aspect = w / math.max(h, 1e-6)
-    -- Near-square AABB: the top edge *is* the heading. Only a clearly
-    -- wide/tall envelope disagrees with a ~90° top-edge (detector
-    -- ordered a tall local box on a horizontal pin).
-    if aspect < 1.2 and aspect > (1.0 / 1.2) then
-        return long_axis_heading(rot, w, h)
-    end
-    local tilt = wrap_signed_90(rot)
-    if w >= h then
-        if math.abs(tilt) <= 45.0 then
-            return tilt
-        end
-        return 0.0
-    end
-    if math.abs(tilt) > 45.0 then
-        return rot
-    end
-    return 90.0 + tilt
-end
-
 -- Nearest same-class (or same-text) detection to this expected object's
 -- center among detections not yet claimed by another expected object.
 local function nearest_match(o, detections, claimed)
-    local ex, ey = center(o)
+    local ex, ey = pose.center(o)
     local best, best_dist = nil, math.huge
     for _, d in ipairs(detections) do
-        if not claimed[d._idx] and label_matches_object(d, o) then
-            local dx, dy = center(d)
-            local dist = distance(ex, ey, dx, dy)
+        if not claimed[d._idx] and expected.matches_object(d, o) then
+            local dx, dy = pose.center(d)
+            local dist = pose.distance(ex, ey, dx, dy)
             if dist < best_dist then
                 best, best_dist = d, dist
             end
         end
     end
     return best, best_dist
-end
-
--- Nearest unclaimed detection of *any* class — only after same-class
--- matching has finished, to tell "nothing here" (missing) apart from
--- "something unclaimed IS here, wrong class" (mismatched).
---
--- Must ignore detections already claimed as another object's match:
--- otherwise a neighbor capacitor that correctly matched `capacitor3`
--- also makes a removed `capacitor4` read as "incorrect · wrong type".
--- OCR leftovers on a YOLO slot are not class-confusion — they belong
--- to a text placement (or unused overlay text).
-local function nearest_any_match(o, detections, claimed, expected_flat)
-    local ex, ey = center(o)
-    local skip_ocr = #(o.yolo_classes or {}) > 0
-    local best, best_dist = nil, math.huge
-    for _, d in ipairs(detections) do
-        if not claimed[d._idx]
-            and not is_ocr_kind(d.kind)
-            and not (skip_ocr and label_is_expected_ocr(d.label, expected_flat))
-        then
-            local dx, dy = center(d)
-            local dist = distance(ex, ey, dx, dy)
-            if dist < best_dist then
-                best, best_dist = d, dist
-            end
-        end
-    end
-    return best, best_dist
-end
-
-local function heading_of_expected(o)
-    return long_axis_heading(o.rotation or 0.0, o.width, o.height)
-end
-
-local function heading_of_detected(d)
-    if type(d.rotation) == "number" then
-        return registered_long_axis_heading(d.rotation, d.width, d.height)
-    end
-    return nil
-end
-
--- Pose in the frame the lock's *points* already defined (registration
--- T^{-1}). Board-space positions are lock-center-relative — the AABB
--- heading vs the image axes is not T and must not rotate those vectors.
--- The lock vs itself is the origin (relative position 0, relative
--- heading 0) because both sides use the same lock measurement — not a
--- status skip.
-local function pose_in_lock_frame(o, detected, lock_exp, lock_det)
-    local ox, oy = center(o)
-    local dx, dy = center(detected)
-    local lx, ly = center(lock_exp)
-    local mx, my = center(lock_det)
-    local delta_position = distance(ox - lx, oy - ly, dx - mx, dy - my)
-
-    local h_lock_e = heading_of_expected(lock_exp)
-    local h_lock_d = heading_of_detected(lock_det) or h_lock_e
-    local delta_rotation = nil
-    local h_d = heading_of_detected(detected)
-    if h_d ~= nil then
-        delta_rotation = angle_diff_with_symmetry(
-            h_d - h_lock_d,
-            heading_of_expected(o) - h_lock_e,
-            o.symmetry
-        )
-    end
-    return delta_position, delta_rotation
-end
-
-local function pose_absolute(o, detected)
-    local ex, ey = center(o)
-    local dx, dy = center(detected)
-    local delta_position = distance(ex, ey, dx, dy)
-    local delta_rotation = nil
-    if heading_of_detected(detected) ~= nil then
-        delta_rotation = angle_diff_with_symmetry(
-            heading_of_detected(detected),
-            heading_of_expected(o),
-            o.symmetry
-        )
-    end
-    return delta_position, delta_rotation
-end
-
-local function outcome_from_deltas(delta_position, delta_rotation, thresholds)
-    local position_ok = delta_position <= thresholds.position
-    local rotation_ok = true
-    if delta_rotation ~= nil then
-        rotation_ok = delta_rotation <= thresholds.rotation
-    end
-    if position_ok and rotation_ok then
-        return "matched"
-    elseif not position_ok and not rotation_ok then
-        return "mispositioned_misrotated"
-    elseif not position_ok then
-        return "mispositioned"
-    end
-    return "misrotated"
-end
-
--- Same-class outcome. When a lock is paired, pose is in that lock's
--- frame so the lock's own residual is identically zero.
-local function score_same_class(o, detected, thresholds, lock_frame)
-    local delta_position, delta_rotation
-    if lock_frame then
-        delta_position, delta_rotation = pose_in_lock_frame(
-            o,
-            detected,
-            lock_frame.expected,
-            lock_frame.detected
-        )
-    else
-        delta_position, delta_rotation = pose_absolute(o, detected)
-    end
-    return {
-        id = o.id,
-        yolo_classes = o.yolo_classes,
-        ocr_values = o.ocr_values,
-        is_anchor = o.is_anchor,
-        status = outcome_from_deltas(delta_position, delta_rotation, thresholds),
-        matched_label = detected.label,
-        matched_confidence = detected.confidence,
-        delta_position = delta_position,
-        delta_rotation = delta_rotation,
-        matched_x = detected.x,
-        matched_y = detected.y,
-        matched_width = detected.width,
-        matched_height = detected.height,
-    }
-end
-
-local function mismatched_or_missing(o, detections, thresholds, claimed, expected_flat)
-    local wrong_class, wrong_dist = nearest_any_match(o, detections, claimed, expected_flat)
-    if wrong_class and wrong_dist <= thresholds.position then
-        return {
-            id = o.id,
-            yolo_classes = o.yolo_classes,
-            ocr_values = o.ocr_values,
-            is_anchor = o.is_anchor,
-            status = "mismatched",
-            matched_label = wrong_class.label,
-            matched_confidence = wrong_class.confidence,
-            delta_position = wrong_dist,
-            matched_x = wrong_class.x,
-            matched_y = wrong_class.y,
-            matched_width = wrong_class.width,
-            matched_height = wrong_class.height,
-        }, wrong_class._idx
-    end
-    return {
-        id = o.id,
-        yolo_classes = yolo_classes_for(o),
-        ocr_values = o.ocr_values,
-        is_anchor = o.is_anchor,
-        status = "missing",
-    }, nil
 end
 
 local function validation(input)
-    local thresholds = { position = DEFAULT_THRESHOLDS.position, rotation = DEFAULT_THRESHOLDS.rotation }
-    local given = input.thresholds
-    if type(given) == "table" then
-        if type(given.position) == "number" then
-            thresholds.position = given.position
-        end
-        if type(given.rotation) == "number" then
-            thresholds.rotation = given.rotation
-        end
-    end
-
-    local expected_flat = collapse_stacked(flatten(input.expected or {}, 0.0, 0.0, {}))
-
-    -- Tag each detection with a stable index so claimed-detection index
-    -- can be checked off below — a plain identity/reference check would
-    -- work too, but an explicit `_idx` (internal bookkeeping) is simplest
-    -- given detections round-trip through a marshaled Lua table.
-    local detections = {}
-    for i, d in ipairs(input.registered_detections or {}) do
-        local tagged = { _idx = i }
-        for k, v in pairs(d) do
-            tagged[k] = v
-        end
-        table.insert(detections, tagged)
-    end
+    local thresholds = pose.thresholds(input.thresholds)
+    local expected_flat = collapse_stacked(expected.flatten(input.expected))
+    local detections = spatial.tag(input.registered_detections)
 
     -- Claim same-class matches first (so neighbors don't steal each other),
-    -- then score pose in the lock's frame when a lock is paired.
-    -- A removed part next to a correctly matched sibling must be "missing",
-    -- not "incorrect · wrong type" via the sibling's detection.
+    -- then score pose in the lock's frame when a lock is paired. A removed
+    -- part next to a correctly matched sibling must be "missing", not
+    -- "incorrect · wrong type" via the sibling's detection.
     local claimed = {}
     local pairs = {}
-    local matched = 0
-
+    local paired = {}
     for _, o in ipairs(expected_flat) do
         local det = nearest_match(o, detections, claimed)
         if det then
             claimed[det._idx] = true
-            table.insert(pairs, { object = o, detected = det })
+            pairs[#pairs + 1] = { object = o, detected = det }
+            paired[o] = det
         end
     end
 
-    local lock_frames = {}
-    for _, p in ipairs(pairs) do
-        if p.object.is_anchor then
-            table.insert(lock_frames, { expected = p.object, detected = p.detected })
-        end
-    end
-
-    local function lock_for(o)
-        if o.is_anchor then
-            for _, f in ipairs(lock_frames) do
-                if f.expected.id == o.id then
-                    return f
-                end
-            end
-            return nil
-        end
-        if #lock_frames == 0 then
-            return nil
-        end
-        local ox, oy = center(o)
-        local best, best_d = nil, math.huge
-        for _, f in ipairs(lock_frames) do
-            local lx, ly = center(f.expected)
-            local d = distance(ox, oy, lx, ly)
-            if d < best_d then
-                best, best_d = f, d
-            end
-        end
-        return best
-    end
-
-    local scored = {}
-    for _, p in ipairs(pairs) do
-        scored[p.object.id] = score_same_class(
-            p.object,
-            p.detected,
-            thresholds,
-            lock_for(p.object)
-        )
-    end
-
+    local lock_for = spatial.lock_finder(pairs)
     local objects = {}
-    local pending_slots = {}
-    for _, o in ipairs(expected_flat) do
-        local result = scored[o.id]
-        if result then
-            table.insert(objects, result)
-            if result.status == "matched" then
-                matched = matched + 1
-            end
-        else
-            table.insert(objects, false)
-            table.insert(pending_slots, { index = #objects, object = o })
+    for i, o in ipairs(expected_flat) do
+        local det = paired[o]
+        if det then
+            objects[i] = spatial.scored(o, det, thresholds, lock_for(o))
         end
     end
-    for _, p in ipairs(pending_slots) do
-        local result, used_idx = mismatched_or_missing(
-            p.object,
-            detections,
-            thresholds,
-            claimed,
-            expected_flat
-        )
-        objects[p.index] = result
-        if used_idx then
-            claimed[used_idx] = true
+    for i, o in ipairs(expected_flat) do
+        if not paired[o] then
+            objects[i] = spatial.unpaired(o, detections, thresholds, claimed, expected_flat)
         end
     end
-
-    local extra_detections = {}
-    for _, d in ipairs(detections) do
-        if not claimed[d._idx] and not is_ocr_kind(d.kind) then
-            table.insert(extra_detections, {
-                label = d.label,
-                confidence = d.confidence,
-                x = d.x,
-                y = d.y,
-                width = d.width,
-                height = d.height,
-                rotation = d.rotation,
-                kind = d.kind,
-            })
-        end
-    end
-
-    local total = #expected_flat
-    return {
-        objects = objects,
-        extra_detections = extra_detections,
-        score = total > 0 and (matched / total) or 0.0,
-        matched = matched,
-        total = total,
-        extra = #extra_detections,
-    }
+    return spatial.result(objects, detections, claimed)
 end
 
 return validation

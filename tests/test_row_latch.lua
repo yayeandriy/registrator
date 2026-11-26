@@ -5,7 +5,7 @@ local lua_dir = script_dir .. "../lua/"
 local t = dofile(script_dir .. "asserts.lua")
 local json = dofile(lua_dir .. "json.lua")
 
-local host = dofile(script_dir .. "compose_session.lua")(lua_dir)
+local host = dofile(script_dir .. "compose.lua").load("session")
 
 local function latch(v, latched)
     return json.decode(host(json.encode({

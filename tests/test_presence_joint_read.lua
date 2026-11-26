@@ -2,10 +2,8 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
-normalisator = dofile(script_dir .. "../lua/normalisator.lua")
-matcher = dofile(script_dir .. "../lua/matcher.lua")
-class_match = dofile(script_dir .. "../lua/class_match.lua")
-local presence_validator = dofile(script_dir .. "../lua/presence_validator.lua")
+local compose = dofile(script_dir .. "compose.lua")
+local presence_validator = compose.load("presence_validator")
 local t = dofile(script_dir .. "asserts.lua")
 
 local MODEL = "2353bf0c-1d76-4d4d-a6ee-aa7287d725c0"

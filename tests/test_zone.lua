@@ -2,6 +2,7 @@
 -- filter_keep, frame slack. Mirrors the former Rust `zone.rs` tests.
 
 local script_dir = (arg[0]):match("(.*/)") or "./"
+tables = dofile(script_dir .. "../lua/tables.lua")
 local zone = dofile(script_dir .. "../lua/zone.lua")
 local t = dofile(script_dir .. "asserts.lua")
 

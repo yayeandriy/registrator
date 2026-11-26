@@ -1,7 +1,7 @@
 -- Live inspect: settle which ProfileView to score, then scope placements.
 --
 -- Identity is class_id, else (model, label), else trimmed lowercase label.
--- Standalone: `local inspect_view = dofile("inspect_view.lua")`.
+-- Needs `tables` (bundle `inspect_view`).
 --
 -- Input: { op, objects, detections, latched, completed, kind, class_id,
 --          vision_model_id, view_class_ids, view_models }
@@ -81,14 +81,6 @@ local function anchor_class_keys(object)
     return keys
 end
 
-local function copy_obj(o)
-    local c = {}
-    for k, v in pairs(o) do
-        c[k] = v
-    end
-    return c
-end
-
 local function presence_only(o)
     local presence, spatial = false, false
     for _, r in ipairs(o.routines or {}) do
@@ -131,7 +123,7 @@ local function collect_anchors_excluding(objects, completed)
     local done, out = completed_set(completed), {}
     for _, object in ipairs(view_tips(objects)) do
         if not done[tostring(object.profile_view_id or NIL_ID)] then
-            local row = copy_obj(object)
+            local row = tables.copy(object)
             row.children = {}
             out[#out + 1] = row
         end

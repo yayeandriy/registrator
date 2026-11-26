@@ -91,7 +91,7 @@ local function promote_spatial_children(objects, origin_x, origin_y)
         local x = origin_x + (b.x or 0)
         local y = origin_y + (b.y or 0)
         if has_spatial(o) then
-            local copy = copy_obj(o)
+            local copy = tables.copy(o)
             copy.boundary = { x = x, y = y, width = b.width, height = b.height }
             copy.children = spatial_only_tree(o.children)
             out[#out + 1] = copy
@@ -108,7 +108,7 @@ spatial_only_tree = function(expected)
     local out = {}
     for _, o in ipairs(expected or {}) do
         if has_spatial(o) then
-            local copy = copy_obj(o)
+            local copy = tables.copy(o)
             copy.children = spatial_only_tree(o.children)
             out[#out + 1] = copy
         else
@@ -245,7 +245,7 @@ end
 local function shift_tree(tree, dx, dy)
     local out = {}
     for _, object in ipairs(tree or {}) do
-        local copy = copy_obj(object)
+        local copy = tables.copy(object)
         local b = object.boundary or {}
         copy.boundary = {
             x = (b.x or 0) + dx,
@@ -281,23 +281,11 @@ local function tip_origin(boxes, object_id)
     return 0.0, 0.0
 end
 
-local function apply_board_to_frame(t, x, y)
-    local denom = (t.px or 0) * x + (t.py or 0) * y + 1.0
-    if math.abs(denom) < 1e-12 then
-        return nil
-    end
-    return (t.tx + t.a * x + t.b * y) / denom, (t.ty + t.c * x + t.d * y) / denom
-end
-
-local function transform_scale(t)
-    return math.sqrt(t.a * t.a + t.c * t.c)
-end
-
-function transform_agrees(a, b)
+local function transform_agrees(a, b)
     if type(a) ~= "table" or type(b) ~= "table" then
         return false
     end
-    local sa, sb = transform_scale(a), transform_scale(b)
+    local sa, sb = homography.scale(a), homography.scale(b)
     local smax = math.max(sa, sb, 1e-12)
     if math.abs(sa - sb) / smax > 0.35 then
         return false
@@ -306,7 +294,7 @@ function transform_agrees(a, b)
     return dt < 0.12
 end
 
-function consensus_transform(ts)
+local function consensus_transform(ts)
     local vals = {}
     if type(ts) ~= "table" then
         return nil

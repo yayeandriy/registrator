@@ -2,10 +2,9 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
-normalisator = dofile(script_dir .. "../lua/normalisator.lua")
-matcher = dofile(script_dir .. "../lua/matcher.lua")
-local validation = dofile(script_dir .. "../lua/validation.lua")
-local ruller = dofile(script_dir .. "../lua/ruller.lua")
+local compose = dofile(script_dir .. "compose.lua")
+local validation = compose.load("validation")
+local ruller = compose.load("ruller")
 local t = dofile(script_dir .. "asserts.lua")
 
 local function expected_obj(id, class, x, y, w, h, thresholds, symmetry)

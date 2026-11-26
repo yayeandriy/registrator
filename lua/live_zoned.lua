@@ -75,7 +75,7 @@ local function settle_zone_turn(t, pivot, square_tip, marks, detections, cap)
     local function cost(cand)
         local sum, n = 0.0, 0
         for _, mark in ipairs(marks) do
-            local fx, fy = apply_board_to_frame(cand, mark.x, mark.y)
+            local fx, fy = homography.apply(cand, mark.x, mark.y)
             if fx then
                 local best = math.huge
                 for _, d in ipairs(detections) do
@@ -277,7 +277,7 @@ local function run_zoned_spatial_window(tree, expected, frames, opts, zones)
                             local tcy = (tip.y or 0) + (tip.height or 0) * 0.5
                             local radius = 0.0
                             for _, p in ipairs(local_zone) do
-                                local fx, fy = apply_board_to_frame(t0, p.x, p.y)
+                                local fx, fy = homography.apply(t0, p.x, p.y)
                                 if fx then
                                     radius = math.max(radius, math.sqrt((fx - tcx) ^ 2 + (fy - tcy) ^ 2))
                                 end
@@ -289,7 +289,7 @@ local function run_zoned_spatial_window(tree, expected, frames, opts, zones)
                             local t1 = settle_zone_turn(t0, pivot, square_tip, marks, near, radius)
                             local frame_poly = {}
                             for _, p in ipairs(local_zone) do
-                                local fx, fy = apply_board_to_frame(t1, p.x, p.y)
+                                local fx, fy = homography.apply(t1, p.x, p.y)
                                 if fx then
                                     frame_poly[#frame_poly + 1] = { x = fx, y = fy }
                                 end

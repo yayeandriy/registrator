@@ -7,7 +7,8 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
-local registration = dofile(script_dir .. "../lua/registration.lua")
+local compose = dofile(script_dir .. "compose.lua")
+local registration = compose.load("registration")
 local t = dofile(script_dir .. "asserts.lua")
 
 local function read_file(path)

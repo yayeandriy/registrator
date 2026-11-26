@@ -59,7 +59,7 @@
 -- None free, a box goes to the first with `only`, and is a conflict when
 -- the first is held the other way.
 --
--- Needs `zone` in scope (`zone.lua`): the hosts compose it ahead of this.
+-- Needs `zone` and `boxes` in scope: the hosts compose them ahead of this.
 
 local populate = {}
 
@@ -85,20 +85,10 @@ local function contains(list, value)
     return false
 end
 
-local function iou(a, b)
-    local ix = math.min(a.x + a.width, b.x + b.width) - math.max(a.x, b.x)
-    local iy = math.min(a.y + a.height, b.y + b.height) - math.max(a.y, b.y)
-    if ix <= 0 or iy <= 0 then
-        return 0
-    end
-    local inter = ix * iy
-    local union = a.width * a.height + b.width * b.height - inter
-    return union > 0 and inter / union or 0
-end
 
-local function nms(boxes, threshold)
+local function nms(found, threshold)
     local order = {}
-    for i, d in ipairs(boxes) do
+    for i, d in ipairs(found) do
         order[i] = { d = d, i = i }
     end
     table.sort(order, function(a, b)
@@ -112,7 +102,7 @@ local function nms(boxes, threshold)
     for _, item in ipairs(order) do
         local dup = false
         for _, k in ipairs(kept) do
-            if iou(k, item.d) >= threshold then
+            if boxes.iou(k, item.d) >= threshold then
                 dup = true
                 break
             end
@@ -126,7 +116,7 @@ end
 
 local function already_placed(placed, component_id, box, threshold)
     for _, p in ipairs(placed or {}) do
-        if p.component_id == component_id and iou(p, box) >= threshold then
+        if p.component_id == component_id and boxes.iou(p, box) >= threshold then
             return true
         end
     end
@@ -280,9 +270,9 @@ function populate.place(input)
         end
         entry.count = entry.count + 1
     end
-    local boxes = nms(found, threshold)
+    local kept = nms(found, threshold)
     for _, d in ipairs(texts) do
-        boxes[#boxes + 1] = d
+        kept[#kept + 1] = d
     end
 
     local components = input.components or {}
@@ -296,7 +286,7 @@ function populate.place(input)
     for _, c in ipairs(components) do
         used[key(c.name)] = true
     end
-    for _, d in ipairs(boxes) do
+    for _, d in ipairs(kept) do
         local text, class = "", nil
         if d.kind == "ocr" then
             text = trim(d.label)

@@ -1,5 +1,5 @@
 -- Live extras strip + tree helpers. Concatenated into live.lua's chunk.
--- Locals from the host wrap: class_match, normalisator, zone.
+-- Locals from the host wrap: class_match, normalisator, zone, tables.
 
 local SPATIAL_ROUTINE = "spatial_validate"
 local PRESENCE_ROUTINE = "presence_validate"
@@ -30,18 +30,7 @@ local function is_ocr_kind(kind)
 end
 
 local function class_key(raw)
-    if type(class_match) == "table" and type(class_match.key) == "function" then
-        return class_match.key(raw)
-    end
-    return tostring(raw or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower():gsub("%s+", "_")
-end
-
-local function copy_obj(o)
-    local c = {}
-    for k, v in pairs(o) do
-        c[k] = v
-    end
-    return c
+    return class_match.key(raw)
 end
 
 local function expected_has_ocr(nodes)
@@ -196,11 +185,9 @@ local function strip_ocr_presence_extras(result)
 end
 
 local function fold_value(s)
-    if type(normalisator) == "function" then
-        local r = normalisator({ value = s })
-        if type(r) == "table" and type(r.value) == "string" then
-            return r.value
-        end
+    local r = normalisator({ value = s })
+    if type(r) == "table" and type(r.value) == "string" then
+        return r.value
     end
     return s
 end
@@ -285,18 +272,15 @@ local function drop_anchors(tree)
         if object.is_anchor then
             local b = object.boundary or {}
             for _, kid in ipairs(kids) do
-                local copy = copy_obj(kid)
-                local kb = {}
-                for k, v in pairs(kid.boundary or {}) do
-                    kb[k] = v
-                end
+                local copy = tables.copy(kid)
+                local kb = tables.copy(kid.boundary or {})
                 kb.x = (kb.x or 0) + (b.x or 0)
                 kb.y = (kb.y or 0) + (b.y or 0)
                 copy.boundary = kb
                 out[#out + 1] = copy
             end
         else
-            local copy = copy_obj(object)
+            local copy = tables.copy(object)
             copy.children = kids
             out[#out + 1] = copy
         end

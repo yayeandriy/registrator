@@ -5,9 +5,8 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
-normalisator = dofile(script_dir .. "../lua/normalisator.lua")
-matcher = dofile(script_dir .. "../lua/matcher.lua")
-local validation = dofile(script_dir .. "../lua/validation.lua")
+local compose = dofile(script_dir .. "compose.lua")
+local validation = compose.load("validation")
 local t = dofile(script_dir .. "asserts.lua")
 
 local function read_file(path)

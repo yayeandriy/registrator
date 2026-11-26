@@ -17,7 +17,7 @@ local function det_center_dist(a, b)
     return math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2)
 end
 
-function registered_for_spatial_validation(accumulated, registered_frames)
+local function registered_for_spatial_validation(accumulated, registered_frames)
     local out = {}
     for _, d in ipairs(accumulated or {}) do
         out[#out + 1] = d

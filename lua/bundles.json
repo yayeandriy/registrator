@@ -1,0 +1,158 @@
+{
+  "registration": {
+    "wrap": [
+      "class_match",
+      "normalisator",
+      "matcher",
+      "expected",
+      "pose",
+      "homography",
+      "registration_anchors",
+      "registration_scene"
+    ],
+    "inline": [
+      "registration"
+    ]
+  },
+  "validation": {
+    "wrap": [
+      "class_match",
+      "normalisator",
+      "matcher",
+      "expected",
+      "pose",
+      "spatial"
+    ],
+    "inline": [
+      "validation"
+    ]
+  },
+  "layout": {
+    "wrap": [
+      "class_match",
+      "normalisator",
+      "matcher",
+      "expected",
+      "pose",
+      "spatial",
+      "hungarian"
+    ],
+    "inline": [
+      "layout"
+    ]
+  },
+  "presence_validator": {
+    "wrap": [
+      "class_match",
+      "normalisator",
+      "matcher",
+      "expected",
+      "boxes",
+      "catalog_instances",
+      "presence_ocr",
+      "presence_catalog"
+    ],
+    "inline": [
+      "presence_validator"
+    ]
+  },
+  "ruller": {
+    "wrap": [
+      "class_match",
+      "normalisator",
+      "matcher",
+      "expected",
+      "pose"
+    ],
+    "inline": [
+      "ruller"
+    ]
+  },
+  "live": {
+    "wrap": [
+      "tables",
+      "class_match",
+      "normalisator",
+      "matcher",
+      "expected",
+      "pose",
+      "spatial",
+      "hungarian",
+      "homography",
+      "registration_anchors",
+      "registration_scene",
+      "registration",
+      "validation",
+      "layout",
+      "ruller",
+      "boxes",
+      "catalog_instances",
+      "presence_ocr",
+      "presence_catalog",
+      "presence_validator",
+      "accumulator",
+      "zone",
+      "wrapper"
+    ],
+    "inline": [
+      "live_strip",
+      "live_spatial",
+      "live_window",
+      "live_zoned",
+      "live"
+    ]
+  },
+  "session": {
+    "wrap": [
+      "json",
+      "class_match",
+      "normalisator",
+      "matcher",
+      "boxes",
+      "tables",
+      "ocr_window",
+      "inspect_view",
+      "verdict",
+      "session",
+      "session_zones",
+      "session_extras",
+      "session_view",
+      "report_rules",
+      "catalog_instances",
+      "report_catalog",
+      "report_zones",
+      "report",
+      "zone",
+      "populate",
+      "detect"
+    ],
+    "inline": [
+      "session_host"
+    ]
+  },
+  "inspect_view": {
+    "wrap": [
+      "tables"
+    ],
+    "inline": [
+      "inspect_view"
+    ]
+  },
+  "prepare": {
+    "wrap": [
+      "tables"
+    ],
+    "inline": [
+      "prepare"
+    ]
+  },
+  "zone": {
+    "wrap": [
+      "tables",
+      "zone"
+    ],
+    "inline": [
+      "zone_dispatch"
+    ]
+  }
+}

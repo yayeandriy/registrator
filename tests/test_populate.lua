@@ -1,6 +1,8 @@
 local script_dir = (arg[0]):match("(.*/)") or "./"
 local t = dofile(script_dir .. "asserts.lua")
+tables = dofile(script_dir .. "../lua/tables.lua")
 zone = dofile(script_dir .. "../lua/zone.lua")
+boxes = dofile(script_dir .. "../lua/boxes.lua")
 local populate = dofile(script_dir .. "../lua/populate.lua")
 
 local function box(label, x, y, w, h, extra)

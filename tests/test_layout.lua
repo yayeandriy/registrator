@@ -3,10 +3,9 @@
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
-normalisator = dofile(script_dir .. "../lua/normalisator.lua")
-matcher = dofile(script_dir .. "../lua/matcher.lua")
-local validation = dofile(script_dir .. "../lua/validation.lua")
-local layout = dofile(script_dir .. "../lua/layout.lua")
+local compose = dofile(script_dir .. "compose.lua")
+local validation = compose.load("validation")
+local layout = compose.load("layout")
 local t = dofile(script_dir .. "asserts.lua")
 
 local function expected_obj(id, class, x, y, w, h)
@@ -138,6 +137,50 @@ local lock_laid = layout({
 t.eq(lock_laid.objects[1].status, "matched", "lock AABB heading is not a residual")
 t.close(lock_laid.objects[1].delta_rotation, 0.0, 1e-6, "layout lock dRot is 0")
 t.close(lock_laid.objects[1].delta_position, 0.0, 1e-6, "layout lock dPos is 0")
+
+-- Identity is class_id first, then model + label, then label — the
+-- `class_match` rule `validation.lua` claims with.
+local function lay(objects, dets)
+    return layout({
+        expected = objects,
+        registered_detections = dets,
+        thresholds = { position = 8.0, rotation = 30.0 },
+        enabled = true,
+    })
+end
+
+local function with_ref(id, class_id, label)
+    local o = expected_obj(id, label, 0.0, 0.0, 10.0, 10.0)
+    o.yolo_class_refs = { { class_id = class_id, label = label } }
+    return o
+end
+
+local renamed = det("pin_v2", 0.0, 0.0, 10.0, 10.0)
+renamed.class_id = "c1"
+t.eq(lay({ with_ref("a", "c1", "pin") }, { renamed }).objects[1].status, "matched", "layout: same class_id, renamed label matches")
+
+local other_class = det("pin", 0.0, 0.0, 10.0, 10.0)
+other_class.class_id = "c9"
+local by_other = lay({ with_ref("a", "c1", "pin") }, { other_class }).objects[1]
+t.eq(by_other.status, "mismatched", "layout: same label, other class_id is not a match")
+
+local other_model = det("pin", 0.0, 0.0, 10.0, 10.0)
+other_model.vision_model_id = "m2"
+local scoped = expected_obj("a", "pin", 0.0, 0.0, 10.0, 10.0)
+scoped.vision_model_id = "m1"
+t.eq(lay({ scoped }, { other_model }).objects[1].status, "mismatched", "layout: same label on another model is not a match")
+
+-- Two refs share a label; each pairs with its own class_id even when the
+-- other box sits closer.
+local swapped_a = det("pin", 20.0, 0.0, 10.0, 10.0)
+swapped_a.class_id = "c1"
+local swapped_b = det("pin", 0.0, 0.0, 10.0, 10.0)
+swapped_b.class_id = "c2"
+local ref_b = with_ref("b", "c2", "pin")
+ref_b.boundary.x = 20.0
+local by_class = lay({ with_ref("a", "c1", "pin"), ref_b }, { swapped_a, swapped_b })
+t.eq(by_id(by_class, "a").matched_x, 20.0, "layout: a takes its class_id box, not the nearer one")
+t.eq(by_id(by_class, "b").matched_x, 0.0, "layout: b takes its class_id box")
 
 if not t.summary("layout") then
     os.exit(1)

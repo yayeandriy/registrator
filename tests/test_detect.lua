@@ -1,6 +1,8 @@
 local script_dir = (arg[0]):match("(.*/)") or "./"
 local t = dofile(script_dir .. "asserts.lua")
 local json = dofile(script_dir .. "../lua/json.lua")
+boxes = dofile(script_dir .. "../lua/boxes.lua")
+class_match = dofile(script_dir .. "../lua/class_match.lua")
 local detect = dofile(script_dir .. "../lua/detect.lua")
 
 local function box(x, y, w, h, confidence, kind)
@@ -51,5 +53,35 @@ local edge = collapse({
 t.ok(edge[1] and edge[2], "an IoU equal to the threshold does not drop")
 
 t.eq(#collapse({}, 0.45), 0, "nothing to judge, nothing kept")
+
+local function class_ids(catalog, detections)
+    local wire = json.decode(json.encode({ catalog = catalog, detections = detections }))
+    return detect.class_ids(wire).index
+end
+
+local catalog = {
+    { label = "a_1 lower", vision_model_id = "m1" },
+    { label = "Bolt", vision_model_id = "m1" },
+    { label = "bolt", vision_model_id = "m2" },
+    { label = "a_1_lower", vision_model_id = "m1" },
+}
+local ids = class_ids(catalog, {
+    { label = "a_1_lower", vision_model_id = "m1" },
+    { label = "a_1 lower", vision_model_id = "m1" },
+    { label = "  A_1  LOWER ", vision_model_id = "m1" },
+})
+t.eq(ids[1], 1, "an underscore finds the catalog class spelled with a space")
+t.eq(ids[2], 1, "the same label resolves to the first catalog class with its key")
+t.eq(ids[3], 1, "case and outer space do not matter")
+
+local models = class_ids(catalog, {
+    { label = "BOLT", vision_model_id = "m2" },
+    { label = "bolt", vision_model_id = "m3" },
+    { label = "nut", vision_model_id = "m1" },
+})
+t.eq(models[1], 3, "a label resolves on its own model's catalog")
+t.eq(models[2], 0, "a model with no catalog class gets none")
+t.eq(models[3], 0, "an unknown label gets none")
+t.eq(#class_ids(catalog, {}), 0, "no detections, no answers")
 
 if not t.summary("detect") then os.exit(1) end

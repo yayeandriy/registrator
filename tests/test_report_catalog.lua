@@ -8,6 +8,8 @@ normalisator = dofile(lua_dir .. "normalisator.lua")
 matcher = dofile(lua_dir .. "matcher.lua")
 ocr_window = dofile(lua_dir .. "ocr_window.lua")
 report_rules = dofile(lua_dir .. "report_rules.lua")
+boxes = dofile(lua_dir .. "boxes.lua")
+catalog_instances = dofile(lua_dir .. "catalog_instances.lua")
 local catalog = dofile(lua_dir .. "report_catalog.lua")
 local rules = report_rules
 

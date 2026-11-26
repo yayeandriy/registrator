@@ -1,18 +1,9 @@
 -- Presence is location-free: a part's detections count wherever they lie.
 
 local script_dir = (arg[0]):match("(.*/)")
-local json = dofile(script_dir .. "../lua/json.lua")
-normalisator = dofile(script_dir .. "../lua/normalisator.lua")
-matcher = dofile(script_dir .. "../lua/matcher.lua")
-class_match = dofile(script_dir .. "../lua/class_match.lua")
-local presence_validator = dofile(script_dir .. "../lua/presence_validator.lua")
+local h = dofile(script_dir .. "presence_helpers.lua")
 local t = dofile(script_dir .. "asserts.lua")
-
-local VISION = "c4f1ba0c-bb60-4a9a-84dc-de17a305dff8"
-
-local function run(input)
-    return json.decode(json.encode(presence_validator(input)))
-end
+local run, find_object, VISION = h.run, h.find_object, h.VISION
 
 local function part(id, classes, texts)
     return {
@@ -85,6 +76,130 @@ local one_read = run({
 })
 t.eq(statuses(one_read, "e"), "ocr:matched", "one read: counts for the first part")
 t.eq(statuses(one_read, "f"), "ocr:missing", "one read: not again for the second")
+
+-- Presence is location-free: the text counts away from the class box.
+local spatial_out = run({
+    expected = {
+        {
+            id = "spat0000-0000-4000-8000-000000000001",
+            yolo_classes = { "test_1_lower" },
+            ocr_values = { "2020" },
+            presence = true,
+            vision_model_id = VISION,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = false,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "test_1_lower", confidence = 0.9, x = 0.0, y = 0.0, width = 0.2, height = 0.2, kind = "yolo" },
+        { label = "2020", confidence = 1.0, x = 0.8, y = 0.8, width = 0.1, height = 0.1, kind = "ocr" },
+    },
+})
+t.eq(spatial_out.matched, 2, "spatial_out: YOLO and OCR both count")
+local spat_ocr = find_object(spatial_out.objects, "spat0000-0000-4000-8000-000000000001", "ocr")
+t.eq(spat_ocr.status, "matched", "spatial_out: OCR outside the class box counts")
+
+local spatial_in = run({
+    expected = {
+        {
+            id = "spat0000-0000-4000-8000-000000000002",
+            yolo_classes = { "test_1_lower" },
+            ocr_values = { "2020" },
+            presence = true,
+            vision_model_id = VISION,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = false,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "test_1_lower", confidence = 0.9, x = 0.0, y = 0.0, width = 0.4, height = 0.4, kind = "yolo" },
+        { label = "2020", confidence = 1.0, x = 0.1, y = 0.1, width = 0.1, height = 0.1, kind = "ocr" },
+    },
+})
+t.eq(spatial_in.matched, 2, "spatial_in: YOLO + OCR inside")
+t.eq(spatial_in.total, 2, "spatial_in: two rows")
+
+-- Multi-class: OCR gated by union of all claimed class boxes.
+local spatial_union = run({
+    expected = {
+        {
+            id = "spat0000-0000-4000-8000-000000000003",
+            yolo_classes = { "test_1_lower", "test_1_upper" },
+            ocr_values = { "2020", "P06" },
+            presence = true,
+            vision_model_id = VISION,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = false,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "test_1_lower", confidence = 0.9, x = 0.0, y = 0.0, width = 0.3, height = 0.3, kind = "yolo" },
+        { label = "test_1_upper", confidence = 0.9, x = 0.4, y = 0.0, width = 0.3, height = 0.3, kind = "yolo" },
+        { label = "2020", confidence = 1.0, x = 0.05, y = 0.05, width = 0.1, height = 0.1, kind = "ocr" },
+        { label = "P06", confidence = 1.0, x = 0.5, y = 0.05, width = 0.1, height = 0.1, kind = "ocr" },
+    },
+})
+t.eq(spatial_union.total, 3, "spatial_union: 1 YOLO + 2 OCR")
+t.eq(spatial_union.matched, 3, "spatial_union: both texts inside union")
+t.eq(spatial_union.extra, 0, "spatial_union: both class boxes claimed (not EXTRA)")
+
+-- Text in neither half of a two-class part still counts.
+local spatial_gap = run({
+    expected = {
+        {
+            id = "spat0000-0000-4000-8000-000000000004",
+            yolo_classes = { "test_1_lower", "test_1_upper" },
+            ocr_values = { "P06" },
+            presence = true,
+            vision_model_id = VISION,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = false,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "test_1_lower", confidence = 0.9, x = 0.0, y = 0.0, width = 0.2, height = 0.2, kind = "yolo" },
+        { label = "test_1_upper", confidence = 0.9, x = 0.3, y = 0.0, width = 0.2, height = 0.2, kind = "yolo" },
+        { label = "P06", confidence = 1.0, x = 0.9, y = 0.9, width = 0.05, height = 0.05, kind = "ocr" },
+    },
+})
+local gap_ocr = find_object(spatial_gap.objects, "spat0000-0000-4000-8000-000000000004", "ocr")
+t.eq(gap_ocr.status, "matched", "spatial_gap: OCR outside both class boxes counts")
+
+
+-- A text far from the class box still counts: only a wrapper ties them.
+local FAR_ID = "far00000-0000-4000-8000-000000000001"
+local far_noise = run({
+    expected = {
+        {
+            id = FAR_ID,
+            yolo_classes = { "test_1_lower" },
+            ocr_values = { "2020" },
+            presence = true,
+            vision_model_id = VISION,
+            boundary = { x = 0, y = 0, width = 1, height = 1 },
+            rotation = 0,
+            is_anchor = true,
+            children = {},
+        },
+    },
+    detections = {
+        { label = "test_1_lower", confidence = 0.9, x = 0.1, y = 0.1, width = 0.2, height = 0.2, kind = "yolo" },
+        { label = "2020", confidence = 1.0, x = 0.8, y = 0.8, width = 0.1, height = 0.1, kind = "ocr" },
+        { label = "9 New T 1", confidence = 0.9, x = 0.7, y = 0.7, width = 0.15, height = 0.1, kind = "ocr" },
+    },
+})
+t.eq(far_noise.matched, 2, "far_noise: YOLO and the far text both count")
+local far_ocr = find_object(far_noise.objects, FAR_ID, "ocr")
+t.eq(far_ocr.status, "matched", "far_noise: 2020 away from the class box counts")
+
 
 if not t.summary("presence_anywhere") then
     os.exit(1)

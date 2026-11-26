@@ -1,9 +1,9 @@
 -- Live extras / searching gate / fill / transform agreement.
 
 local script_dir = (arg[0]):match("(.*/)") or "./"
-local compose = dofile(script_dir .. "compose_live.lua")
+local compose = dofile(script_dir .. "compose.lua")
 local root = script_dir .. "../"
-local live = assert(load(compose(root), "live.lua"))()
+local live = compose.load("live")
 local t = dofile(script_dir .. "asserts.lua")
 local json = dofile(root .. "lua/json.lua")
 

@@ -32,58 +32,7 @@
 --
 -- Output: the same shape as `validation.lua` (objects / extras / score).
 
-local DEFAULT_THRESHOLDS = {
-    position = 8.0,
-    rotation = 30.0,
-}
-
-local function trim(s)
-    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
-end
-
-local function non_empty(s)
-    return type(s) == "string" and trim(s) ~= ""
-end
-
-local function yolo_classes_for(o)
-    if type(o.yolo_classes) == "table" then
-        local out = {}
-        for _, v in ipairs(o.yolo_classes) do
-            if non_empty(v) then
-                table.insert(out, trim(v))
-            end
-        end
-        if #out > 0 then
-            return out
-        end
-    end
-    if non_empty(o.yolo_class) then
-        return { trim(o.yolo_class) }
-    end
-    return {}
-end
-
-local function flatten(objects, origin_x, origin_y, out)
-    origin_x = origin_x or 0.0
-    origin_y = origin_y or 0.0
-    for _, o in ipairs(objects) do
-        local x = origin_x + o.boundary.x
-        local y = origin_y + o.boundary.y
-        table.insert(out, {
-            id = o.id,
-            symmetry = o.symmetry or "inf",
-            thresholds = o.thresholds,
-            real_size = o.real_size,
-            width = o.boundary and o.boundary.width or 0.0,
-            height = o.boundary and o.boundary.height or 0.0,
-            yolo_classes = yolo_classes_for(o),
-        })
-        if o.children then
-            flatten(o.children, x, y, out)
-        end
-    end
-    return out
-end
+-- Needs `expected` and `pose` (composed by `bundles.json`).
 
 local function pose_statuses(status)
     return status == "matched"
@@ -181,35 +130,12 @@ local function rotation_thresholds_apply(symmetry)
     return s == "60" or s == "90" or s == "120" or s == "180"
 end
 
-local function pose_status(ok_pos, ok_rot)
-    if ok_pos and ok_rot then
-        return "matched"
-    elseif not ok_pos and not ok_rot then
-        return "mispositioned_misrotated"
-    elseif not ok_pos then
-        return "mispositioned"
-    end
-    return "misrotated"
-end
-
 local function ruller(input)
-    local thresholds = {
-        position = DEFAULT_THRESHOLDS.position,
-        rotation = DEFAULT_THRESHOLDS.rotation,
-    }
-    local given = input.thresholds
-    if type(given) == "table" then
-        if type(given.position) == "number" then
-            thresholds.position = given.position
-        end
-        if type(given.rotation) == "number" then
-            thresholds.rotation = given.rotation
-        end
-    end
+    local thresholds = pose.thresholds(input.thresholds)
 
     local validation = input.validation or {}
     local objects = validation.objects or {}
-    local expected_flat = flatten(input.expected or {}, 0.0, 0.0, {})
+    local expected_flat = expected.flatten(input.expected)
 
     local matched = 0
     local out_objects = {}
@@ -237,7 +163,7 @@ local function ruller(input)
                     -- Keep validation.lua's rotation classification.
                     ok_rot = copy.status == "matched" or copy.status == "mispositioned"
                 end
-                copy.status = pose_status(ok_pos, ok_rot)
+                copy.status = pose.status(ok_pos, ok_rot)
             end
         end
         if copy.status == "matched" then

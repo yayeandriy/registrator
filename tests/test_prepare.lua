@@ -1,7 +1,7 @@
 -- prepare.lua spatial_branch / ensure_spatial_anchor.
 
 local script_dir = (arg[0]):match("(.*/)") or "./"
-local prepare = dofile(script_dir .. "../lua/prepare.lua")
+local prepare = dofile(script_dir .. "compose.lua").load("prepare")
 local t = dofile(script_dir .. "asserts.lua")
 
 local function box_at(id, x, w, h, routines, anchor)

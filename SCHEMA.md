@@ -1,6 +1,6 @@
 # Script I/O schemas
 
-Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`, `zone.lua`, `live.lua`, `inspect_view.lua`, `prepare.lua`, `kit.lua`) evaluates to a single callable: `local fn = dofile("registration.lua"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
+Every script in `lua/` (`registration.lua`, `validation.lua`, `layout.lua`, `ruller.lua`, `presence_validator.lua`, `presence_latch.lua`, `accumulator.lua`, `normalisator.lua`, `matcher.lua`, `zone.lua`, `live.lua`, `inspect_view.lua`, `prepare.lua`, `kit.lua`) evaluates to a single callable. Scripts that use shared modules (`class_match`, `expected`, `pose`, `spatial`, `hungarian`, `homography`, `boxes`, `tables`, …) — every one but `presence_latch`, `accumulator`, `normalisator`, `matcher` and `kit` — are run as the bundle `lua/bundles.json` names: each `wrap` module as `local <name> = (function() … end)()`, then the `inline` files. `tests/compose.lua` builds them the same way: `local fn = dofile("tests/compose.lua").load("registration"); local output = fn(input)`. `input`/`output` are plain Lua tables — see each file's own header comment for the authoritative, always-up-to-date description of exactly what it does and why. This file exists purely as a field-level index for whoever's writing a *new host* (a JSON-boundary harness, a fixture, a test) and needs the JSON shape at a glance, without reading three files' worth of algorithm commentary first.
 
 Field names are exactly as the scripts read them — snake_case, matching the original Rust structs these mirror 1:1 (`inventor-api`'s `crates/registrator` and `domain::ReferenceObject`).
 
@@ -127,7 +127,7 @@ Global min-cost assignment of detections to expected objects. Independent of `va
 }
 ```
 
-`enabled` omitted → on. Cost is center distance when the detection label matches the object; otherwise unused. Then the same mismatched / missing pass as `validation.lua`.
+`enabled` omitted → on. Cost is center distance when the detection is one of the object's classes by `class_match` (class_id, then model + label, then label — the same identity `validation.lua` claims with), or for a text-only object a read holding one of its texts; otherwise unused. Then the same mismatched / missing pass as `validation.lua`.
 
 **Output:** same shape as `validation.lua` (including `matched_*` on claimed rows).
 
@@ -332,7 +332,7 @@ Lookalikes O/0, I/1, S/5, B/8 match each other. A code also matches read upside 
 
 ## `zone.lua`
 
-Board-space zone membership. Helpers also live on the returned table (`zone.point_in_zone`, `zone.filter_keep`, …).
+Board-space zone membership. Helpers also live on the module table (`zone.point_in_zone`, `zone.filter_keep`, …). Run alone as the `zone` bundle (`tables`, `zone`, then `zone_dispatch.lua`, which answers `zone.dispatch`).
 
 **Input:** `{ "op": "polygon_in_frame"|"point_in_zone"|"box_inside_zone"|"flatten_abs"|"usable_zones"|"zone_member_ids"|"filter_keep"|"with_sole_anchor"|"hits", ... }`
 
@@ -344,7 +344,7 @@ Frame slack is `0.02`. Exclusive assignment: each placement belongs to the small
 
 ## `live.lua`
 
-iOS `RegistratorRunner.process`. Host concatenates libraries as locals (`class_match`, `normalisator`, `matcher`, `registration`, `validation`, `layout`, `ruller`, `presence_validator`, `accumulator`, `zone`, `wrapper`) plus `live_strip.lua` / `live_spatial.lua` / `live_window.lua` / `live_zoned.lua` / `live.lua`. `register_with` calls `registration.lua` with `{ "op": "register_with", "transform", "detections" }` — not a second inverse map.
+iOS `RegistratorRunner.process`. Host composes the `live` bundle of `lua/bundles.json`: its libraries as locals, then `live_strip.lua` / `live_spatial.lua` / `live_window.lua` / `live_zoned.lua` / `live.lua` sharing one chunk. `register_with` calls `registration.lua` with `{ "op": "register_with", "transform", "detections" }` — not a second inverse map.
 
 **Input (inspect):**
 
@@ -409,7 +409,7 @@ A profile's placements, the project's components and the class catalog, turned i
 
 ## Session ops — `session_host.lua`
 
-Every live-session decision a client used to make: the verdict it shows, OCR settle, zone latch, the settle gate, completion, the next still, the anchor search and router completion. Hosts concatenate `json`, `normalisator`, `ocr_window`, `inspect_view`, `verdict`, `session`, `session_zones`, `session_extras`, `session_view`, `report_rules`, `report_catalog`, `report_zones`, `report`, `zone`, `populate` as locals in that order, then `session_host.lua` (Rust: `registrator::run_session_op`; desktop: Tauri `session_op`; iOS: `SessionOps`). Clients keep the counters each op hands back and paint the answer; they decide nothing.
+Every live-session decision a client used to make: the verdict it shows, OCR settle, zone latch, the settle gate, completion, the next still, the anchor search and router completion. Hosts compose the `session` bundle of `lua/bundles.json` (its `wrap` modules as locals in that order, then `session_host.lua`) (Rust: `registrator::run_session_op`; desktop: Tauri `session_op`; iOS: `SessionOps`). Clients keep the counters each op hands back and paint the answer; they decide nothing.
 
 **Input (JSON text):** `{ "module": "verdict"|"session"|"zones"|"ocr"|"extras"|"view"|"report"|"populate"|"detect", "op": "<name>", "args": { ... } }`. `null` reads as absent.
 
@@ -446,6 +446,7 @@ Every live-session decision a client used to make: the verdict it shows, OCR set
 | `report.no_anchor` | `objects`, `anchor_count` | `{ no_anchor }` — Spatial is on but nothing can anchor |
 | `populate.place` | `detections: [{ label, confidence, x, y, width, height, rotation?, kind: "yolo"|"ocr" }]` (board units), `components: [{ id, name, class_ids, text_values }]`, `classes: [{ id, label, geometry? }]`, `placed?: [{ component_id, x, y, width, height }]` (the view's boxes), `counted?: [component_id]` (Presence on the view), `only?: [component_id]`, `picked?: [class_id]`, `none_picked?: bool`, `reads?: "yolo"|"ocr"|"all"`, `kind?: "spatial"|"presence"`, `areas?: [[{ x, y }]]` (board-unit polygons), `iou?` (0.5), `separate?: bool` | `{ placements: [{ component_id? , new?, x, y, width, height, rotation }], counts: [{ component_id?, new?, count }], new_components: [{ name, class_ids, text_values, width, height, geometry? }], skipped, duplicates, outside, unpicked, conflicts, out_of_area }` — with `areas`, a box (class or text) whose middle lies in none of them is dropped first and counted in `out_of_area`; class boxes collapse class-agnostically (NMS); a class box takes the text whose middle it holds; a box is the component with its text, else (no text) the one linked to its class, else the one named like it (for a class box, never one that only reads texts), else a new one made once per text or class, with its class's `geometry` when it has a class; `new` is a 1-based index into `new_components`; a catalog component's box overlapping one of its `placed` boxes by `iou` is dropped and counted in `duplicates`; with `only`, a box goes to the first of those whose texts hold its text, else the first linked to its class, nothing new is made, names do not count, and the rest count in `outside`; `reads: "yolo"` drops text boxes, `"ocr"` class boxes; with `picked`, a class box whose label is none of those classes is dropped first and counted in `unpicked` (text boxes are read as before); a `picked` holding none of `classes` picks every class, or none with `none_picked`; `kind: "presence"` places nothing and counts each component's boxes in `counts`; Spatial skips `counted` components and Presence components with `placed` boxes, each in `conflicts`; with `separate`, a box goes to the first component it is that is free (Spatial: holds no `placed` box; either: took no box earlier in the call), else to a new one of its own named after it and numbered past the names taken (`square`, `square 2`), Presence counting each so 1; a Spatial box overlapping a `placed` box of any of them is a duplicate, and with none free a box goes to the first under `only` and is a conflict when the first is held the other way |
 | `detect.collapse` | `boxes: [{ x, y, width, height, confidence, kind?, corners? }]` (one space, top-left), `iou?` (0.45) | `{ keep: [bool] }` aligned with `boxes` — across models one object keeps its most confident box: a box whose IoU with a kept one exceeds `iou` drops, whatever the classes, unless it is under half that box's area with its centre inside; `corners` stand for the box by their bounds; text boxes (`kind` `ocr` / `ocr:…`) always stay |
+| `detect.class_ids` | `catalog: [{ label, vision_model_id }]`, `detections: [{ label, vision_model_id }]` | `{ index: [n] }` aligned with `detections` — the 1-based position in `catalog` of the first class on the same model whose label has the same `class_match.key` (case, outer space and space vs `_` ignored: `a_1 lower` is `a_1_lower`), `0` for none; one call per detect request, every model's boxes and catalogs together (server `POST /detect`: `registrator::catalog_class_ids`) |
 
 `ReportEntry` = `{ id, name, bucket: "ok"|"missed"|"incorrect_object"|"misplaced"|"extra"|"incorrect_values", mismatches: [{ expected, seen?, delta_mm?, delta_deg? }], routine?: "presence"|"spatial"|"both", confidence?, matched_label?, zone_owner?, zone_hex?, is_zone_tip }`. `report.build` merges Presence and Spatial rows (a shared id keeps the Spatial outcome), adds missing text rows and catalog-named extras, promotes overlay failures, then splits rows by zone. `sections` = `[{ id, zone, hex?, entries }]` — `entries` are 1-based indexes into `entries`, zones first, then `other` and `extra`.
 

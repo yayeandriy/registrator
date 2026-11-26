@@ -1,7 +1,7 @@
 -- inspect_view.lua settle / scope / keep_detection.
 
 local script_dir = (arg[0]):match("(.*/)") or "./"
-local inspect_view = dofile(script_dir .. "../lua/inspect_view.lua")
+local inspect_view = dofile(script_dir .. "compose.lua").load("inspect_view")
 local t = dofile(script_dir .. "asserts.lua")
 local json = dofile(script_dir .. "../lua/json.lua")
 

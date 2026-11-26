@@ -2,6 +2,8 @@
 --
 -- Input: { op = "spatial_branch"|"ensure_spatial_anchor"|"prepare", objects = { ... } }
 -- Output: { objects = { ... } }
+--
+-- Needs `tables` (bundle `prepare`).
 
 local SPATIAL = "spatial_validate"
 
@@ -14,20 +16,12 @@ local function has_spatial(o)
     return false
 end
 
-local function copy_obj(o)
-    local c = {}
-    for k, v in pairs(o) do
-        c[k] = v
-    end
-    return c
-end
-
 local function spatial_branch(objects)
     local out = {}
     for _, object in ipairs(objects or {}) do
         local kids = spatial_branch(object.children)
         if has_spatial(object) then
-            local copy = copy_obj(object)
+            local copy = tables.copy(object)
             copy.children = kids
             out[#out + 1] = copy
         else
@@ -98,7 +92,7 @@ end
 local function deep_copy_tree(objects)
     local out = {}
     for _, o in ipairs(objects or {}) do
-        local copy = copy_obj(o)
+        local copy = tables.copy(o)
         copy.children = deep_copy_tree(o.children)
         if o.boundary then
             local b = {}

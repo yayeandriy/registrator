@@ -10,21 +10,13 @@
 -- survives a few misses, unless this tick already lists extras of its
 -- class (assignment can rotate which leftover box is the extra).
 
+-- Needs `boxes`.
+
 local extras = {}
 
 local IOU_MIN = 0.2
 local MAX_MISSES = 3
 
-local function iou(a, b)
-    local ix = math.min(a.x + a.width, b.x + b.width) - math.max(a.x, b.x)
-    local iy = math.min(a.y + a.height, b.y + b.height) - math.max(a.y, b.y)
-    if ix <= 0 or iy <= 0 then
-        return 0
-    end
-    local inter = ix * iy
-    local union = a.width * a.height + b.width * b.height - inter
-    return union > 0 and inter / union or 0
-end
 
 -- One box per overlapping same-class cluster, most confident first.
 local function cluster(detections)
@@ -44,7 +36,7 @@ local function cluster(detections)
         local d = item.d
         local dup = false
         for _, k in ipairs(kept) do
-            if k.label == d.label and iou(k, d) >= IOU_MIN then
+            if k.label == d.label and boxes.iou(k, d) >= IOU_MIN then
                 dup = true
                 break
             end
@@ -69,7 +61,7 @@ function extras.sticky(input)
         local best, best_iou = nil, IOU_MIN
         for i, c in ipairs(curr) do
             if not used[i] and c.label == d.label then
-                local v = iou(d, c)
+                local v = boxes.iou(d, c)
                 if v >= best_iou then
                     best, best_iou = i, v
                 end

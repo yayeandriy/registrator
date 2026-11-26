@@ -3,12 +3,13 @@
 -- Identity is class_id, then (vision_model_id, label), then label.
 -- Overlapping labels on different models must not match.
 --
--- class_match(detection, expected)
+-- match(detection, expected)
 --   detection: { label, class_id, vision_model_id }
 --   expected:  string label  OR  { label, class_id, vision_model_id }
---
--- class_in_expected(detection, expected_list)
--- class_key_of(detection_or_ref) — extras / loose-match grouping
+-- similar(detection, expected) — `match` with case / `_`-tolerant labels
+-- in_expected(detection, expected_list)
+-- key(detection_or_ref) — extras grouping
+-- expected_list(object) — `yolo_class_refs`, else labels on its model
 
 local function trim(s)
     if type(s) ~= "string" then
@@ -29,10 +30,18 @@ local function as_str(v)
 end
 
 local function label_key(s)
-    return trim(tostring(s or "")):lower():gsub("%s+", "_")
+    return (trim(tostring(s or "")):lower():gsub("%s+", "_"))
 end
 
-local function class_match(detection, expected)
+local function same_text(a, b)
+    return as_str(a) == as_str(b)
+end
+
+local function same_key(a, b)
+    return label_key(a) == label_key(b)
+end
+
+local function identity(detection, expected, same_label)
     local d = detection or {}
     local exp_label, exp_class_id, exp_model
     if type(expected) == "table" then
@@ -52,7 +61,17 @@ local function class_match(detection, expected)
     if d_model ~= "" and e_model ~= "" and d_model ~= e_model then
         return false
     end
-    return as_str(d.label) == as_str(exp_label)
+    return same_label(d.label, exp_label)
+end
+
+local function class_match(detection, expected)
+    return identity(detection, expected, same_text)
+end
+
+-- Same identity, labels compared ignoring case and space-vs-underscore
+-- (catalog `a_1 lower` vs detector `a_1_lower`).
+local function class_similar(detection, expected)
+    return identity(detection, expected, same_key)
 end
 
 local function class_in_expected(detection, expected_list)
@@ -106,6 +125,7 @@ end
 
 return {
     match = class_match,
+    similar = class_similar,
     in_expected = class_in_expected,
     key = class_key_of,
     expected_list = expected_class_list,
