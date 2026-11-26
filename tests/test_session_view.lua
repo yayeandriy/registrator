@@ -67,6 +67,20 @@ t.eq(wait.class_ids[2], "c-square", "waiting stamps across views")
 local flat = call("view", "frame", { objects = { objects[1] }, completed = {}, catalog_keys = {}, detections = dets })
 t.eq(flags(flat.keep), "true,true,true,true,true", "one unsettled view keeps everything")
 
+-- Labels compare as class_match.key does on the server: case and
+-- space-vs-`_` do not tell a catalog label from a detector's.
+local spaced = {
+    { id = "lowerA", profile_view_id = A, yolo_classes = { "a_1 lower" },
+        yolo_class_refs = { { class_id = "c-lower", label = "a_1 lower", vision_model_id = M } } },
+    objects[3],
+}
+local keyed = call("view", "frame", { objects = spaced, view_id = A, completed = {}, catalog_keys = {},
+    detections = { { kind = "yolo", label = "a_1_lower", vision_model_id = M },
+        { kind = "yolo", label = "A_1 Lower", vision_model_id = M },
+        { kind = "yolo", label = "a_1_lower", vision_model_id = "model-9" } } })
+t.eq(table.concat(keyed.class_ids, ","), "c-lower,c-lower,", "'a_1 lower' == 'a_1_lower', case aside")
+t.eq(flags(keyed.keep), "true,true,false", "stamped detections stay; another model's same label does not")
+
 -- Sticky Spatial extras.
 local function reg(label, x, conf)
     return { label = label, x = x, y = 0, width = 10, height = 10, confidence = conf or 0.8 }

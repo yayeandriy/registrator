@@ -27,6 +27,11 @@
 --   ticks_for_frames { frames, tick_ms } -> { ticks }
 --   stop        { verdict? } -> { result }  (operator stop: the still's result)
 --   overall     { run?, view_results = { "pass"|"fail" } } -> { result }
+--   rescan      { views_done = { { view_id, result } }, phase, view_id?,
+--                 verdict?, result? } -> { failed, forget?, result? }
+--     `failed`: the run ended failed, a view finished failed, or the view on
+--     camera (`phase` "scored") reads failed. Then `forget` lists the failed
+--     views, then that view, and the result clears; else `result` stays.
 --
 -- Zone latch / compose live in `session_zones.lua`.
 
@@ -135,6 +140,27 @@ function session.overall(input)
         return { result = input.run }
     end
     return { result = union_result(input.view_results) }
+end
+
+function session.rescan(input)
+    local scored = input.phase == "scored"
+    local failed = input.result == "fail"
+        or (scored and type(input.verdict) == "table" and input.verdict.result == "fail")
+    local forget, listed = {}, {}
+    for _, done in ipairs(input.views_done or {}) do
+        if done.result == "fail" then
+            failed = true
+            forget[#forget + 1] = done.view_id
+            listed[done.view_id] = true
+        end
+    end
+    if not failed then
+        return { failed = false, result = input.result }
+    end
+    if scored and input.view_id ~= nil and not listed[input.view_id] then
+        forget[#forget + 1] = input.view_id
+    end
+    return { failed = true, forget = forget }
 end
 
 -- A complete PASS finishes the still at once and surplus fails it at once.

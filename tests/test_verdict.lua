@@ -1,10 +1,11 @@
--- Exercises `verdict.lua` (needs `ocr_window` in scope).
+-- Exercises `verdict.lua` (needs `ocr_window` and `verdict_lines` in scope).
 
 local script_dir = (arg[0]):match("(.*/)")
 local json = dofile(script_dir .. "../lua/json.lua")
 normalisator = dofile(script_dir .. "../lua/normalisator.lua")
 matcher = dofile(script_dir .. "../lua/matcher.lua")
 ocr_window = dofile(script_dir .. "../lua/ocr_window.lua")
+verdict_lines = dofile(script_dir .. "../lua/verdict_lines.lua")
 local verdict = dofile(script_dir .. "../lua/verdict.lua")
 local t = dofile(script_dir .. "asserts.lua")
 

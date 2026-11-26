@@ -75,6 +75,31 @@ local collapsed = call("detect", "collapse", {
 })
 t.ok(collapsed.keep[1] == false and collapsed.keep[2] == true, "detect collapse over JSON")
 
+-- A run kept in the VM: its state and window never cross.
+local function kept(op, args)
+    return json.decode(host(json.encode({ module = "session", op = op, args = args,
+        keep = { "state", "window" } })))
+end
+local run = { needles = {}, zone_ids = {}, views = {}, presence = true, spatial = false, objects = {} }
+local rules = { window = 3, miss_hold = 3, view_dwell = 8, next_view = 8, anchor_timeout = 3,
+    finish = true, text_reads = "frame" }
+local read
+for i = 0, 1 do
+    read = kept("reads", { run = run, rules = rules, reads = {}, text_read = false, t = i * 0.1 })
+end
+t.is_nil(read.state, "the state stays in the VM")
+t.is_nil(read.window, "so does the window")
+t.eq(#read.score.frames, 2, "the kept window carries over")
+local ok = pcall(host, json.encode({ module = "session", op = "reads", args = { run = run,
+    rules = rules, reads = 5, t = 0.2 }, keep = { "state", "window" } }))
+t.ok(not ok, "bad reads raise")
+read = kept("reads", { run = run, rules = rules, reads = {}, text_read = false, t = 0.3 })
+t.eq(#read.score.frames, 3, "a failed op keeps what was kept")
+local fresh = dofile(script_dir .. "compose.lua").load("session")
+read = json.decode(fresh(json.encode({ module = "session", op = "reads", args = { run = run,
+    rules = rules, reads = {}, t = 0.0 }, keep = { "state", "window" } })))
+t.eq(#read.score.frames, 1, "another VM starts its own run")
+
 if not t.summary("session_host") then
     os.exit(1)
 end

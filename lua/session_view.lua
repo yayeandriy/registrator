@@ -2,7 +2,9 @@
 -- The settle and keep rules are `inspect_view.lua`; these ops are the
 -- batches a phone tick needs, one call each.
 --
--- Needs `inspect_view` in scope (the host concatenates it ahead).
+-- Needs `inspect_view` and `class_match` in scope (the host concatenates
+-- them ahead). Labels compare by `class_match.key`, as every other match:
+-- case and space-vs-`_` do not tell two labels apart.
 --
 -- `objects` is the profile tree: { id, profile_view_id, is_anchor,
 --   yolo_classes, yolo_class_refs = { { class_id, label, vision_model_id } },
@@ -97,7 +99,7 @@ end
 -- A detection names a class only when its engine model is known: the
 -- first same-label class of another model is never a guess.
 local function class_ref(objects, view_id, label, model)
-    local lab, mid = key(label), key(model)
+    local lab, mid = class_match.key(label), key(model)
     if lab == "" or mid == "" then
         return ""
     end
@@ -105,7 +107,7 @@ local function class_ref(objects, view_id, label, model)
         for _, o in ipairs(nodes or {}) do
             if view_id == nil or same_view(o.profile_view_id, view_id) then
                 for _, r in ipairs(o.yolo_class_refs or {}) do
-                    if key(r.label) == lab and key(r.vision_model_id) == mid then
+                    if class_match.key(r.label) == lab and key(r.vision_model_id) == mid then
                         return tostring(r.class_id or "")
                     end
                 end

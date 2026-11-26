@@ -2,7 +2,8 @@
 -- folded together), each in one bucket, plus the expected rows a HUD
 -- shows before the first scored tick. Hosts only name and paint rows.
 --
--- Needs `report_rules`, `report_catalog` and `report_zones` in scope.
+-- Needs `report_rules`, `report_catalog`, `report_zones` and `report_runs`
+-- in scope.
 --
 --   report.build {
 --       anchor_searching, expected, profile_objects?, anchor_count,
@@ -15,6 +16,7 @@
 --   report.placeholder { expected, presence, spatial }
 --     -> { kind = "presence"|"spatial"|"none", presence?, spatial? }
 --   report.no_anchor { objects, anchor_count } -> { no_anchor }
+--   report.summary { results } -> { result, passed, failed }  (`report_runs`)
 --
 -- entry = { id, name, bucket = "ok"|"missed"|"incorrect_object"|"misplaced"|
 --           "extra"|"incorrect_values", mismatches = { { expected, seen?,
@@ -391,5 +393,7 @@ function report.placeholder(input)
     end
     return { kind = "none" }
 end
+
+report.summary = report_runs.summary
 
 return report

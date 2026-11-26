@@ -8,6 +8,15 @@
 --           op = "<name>", args = { ... } }
 --         as JSON text (Rust) or as the table `LuaVM` already decoded (Swift).
 -- Output: the op's result — JSON text for text input, a table otherwise.
+--
+-- `keep = { "<arg>", … }` beside `module`: those args are not sent; the
+-- op gets what it returned under those names last time in this VM (absent
+-- the first time), and they are kept here instead of returned. A failed op
+-- keeps what was kept before. Hosts that call one VM for a whole run use
+-- it for the run's opaque `state` and `window`.
+
+session.reads, session.tick, session.finish = session_run.reads, session_run.tick, session_run.finish
+session.stop_run, session.rescan_run = session_run.stop_run, session_run.rescan_run
 
 local modules = {
     verdict = verdict,
@@ -39,6 +48,19 @@ local function scrub(v)
     return v
 end
 
+local function copy(v)
+    if type(v) ~= "table" then
+        return v
+    end
+    local out = {}
+    for k, x in pairs(v) do
+        out[k] = copy(x)
+    end
+    return setmetatable(out, getmetatable(v))
+end
+
+local kept = {}
+
 local function dispatch(input)
     input = scrub(input) or {}
     local mod = modules[input.module]
@@ -49,7 +71,17 @@ local function dispatch(input)
     if type(fn) ~= "function" then
         error("unknown session op: " .. tostring(input.module) .. "." .. tostring(input.op))
     end
-    return fn(input.args or {})
+    local args = input.args or {}
+    local keep = input.keep or {}
+    for _, name in ipairs(keep) do
+        args[name] = copy(kept[name])
+    end
+    local out = fn(args)
+    for _, name in ipairs(keep) do
+        kept[name] = out[name]
+        out[name] = nil
+    end
+    return out
 end
 
 return function(input)

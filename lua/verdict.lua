@@ -17,7 +17,9 @@
 --                   ocr = <ocr_window.progress input minus rows/needles> }
 --                                                        -> { verdict = Verdict|nil, ocr }
 --
--- Needs `ocr_window` in scope (see `ocr_window.lua`).
+--   lines { rows, objects }                              -> { lines } (`verdict_lines`)
+--
+-- Needs `ocr_window` and `verdict_lines` in scope.
 --
 -- Verdict = { result = "pass"|"fail"|"pending", matched, total,
 --             incorrect, missing, extra, complete, no_expectations,
@@ -379,5 +381,7 @@ function verdict.merge(input)
     end
     return { verdict = v, ocr = ocr }
 end
+
+verdict.lines = verdict_lines.lines
 
 return verdict
